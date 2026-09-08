@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
+import * as XLSX from "xlsx";
+
 import { createClient } from "@supabase/supabase-js";
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
@@ -9,6 +11,21 @@ const sb = createClient(SUPA_URL, SUPA_KEY);
 // ─── Constants ────────────────────────────────────────────────────────────────
 const GDPL_GSTIN = "27AAICG0606R1Z9";
 const GDPL_NAME  = "Gifting Delight Private Limited";
+const GDPL_STATE = "Maharashtra";
+const STATE_CODES = {"01":"J&K","02":"Himachal Pradesh","03":"Punjab","04":"Chandigarh","05":"Uttarakhand","06":"Haryana","07":"Delhi","08":"Rajasthan","09":"Uttar Pradesh","10":"Bihar","18":"Assam","19":"West Bengal","21":"Odisha","22":"Chhattisgarh","23":"Madhya Pradesh","24":"Gujarat","27":"Maharashtra","29":"Karnataka","30":"Goa","32":"Kerala","33":"Tamil Nadu","34":"Puducherry","36":"Telangana","37":"Andhra Pradesh"};
+const getGSTType = (gstin) => {
+  if (!gstin || gstin.length < 2) return { type:"none", label:"No GST" };
+  const code = gstin.substring(0,2);
+  if (code === "27") return { type:"cgst_sgst", label:"CGST + SGST (Intra-state · Maharashtra)" };
+  return { type:"igst", label:"IGST (Inter-state · "+(STATE_CODES[code]||"Other state")+")" };
+};
+const GSTTag = ({ gstin }) => {
+  if (!gstin || gstin.length < 2) return null;
+  const { type, label } = getGSTType(gstin);
+  const bg = type==="cgst_sgst"?"#dcfce7":type==="igst"?"#e8effd":"#f3f4f6";
+  const col = type==="cgst_sgst"?"#16a34a":type==="igst"?"#1e56d9":"#94a3b8";
+  return <span style={{background:bg,color:col,padding:"3px 10px",borderRadius:6,fontSize:11,fontWeight:600}}>{label}</span>;
+};
 
 const T = {
   navy:"#0f1f3d", navyMid:"#1a3260", blue:"#1e56d9", blueMid:"#1648c0",
@@ -607,49 +624,76 @@ function AdvanceModal({ vendor, onClose, onSubmit }) {
 
 // ─── Payment Recording Modal (Admin) ─────────────────────────────────────────
 function PaymentModal({ invoice, onClose, onConfirm }) {
-  const [form, setForm] = useState({ paymentDate: today(), amount: invoice?.net_payable||invoice?.grand_total||"", mode:"NEFT", reference:"", bank:"", remarks:"" });
+  const [form, setForm] = useState({ paymentDate: today(), amount: invoice?.net_payable||invoice?.grand_total||invoice?.totalAmount||"", mode:"NEFT", reference:"", ourBank:"SBI - Current A/c", remarks:"", tdsApplicable:false, tdsSection:"194C - Contractor (1%)", tdsRate:"1", tdsAmount:"", netAfterTds:"" });
   const [errors, setErrors] = useState({});
-  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
-
+  const set = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  useEffect(()=>{
+    if(form.tdsApplicable && form.amount){
+      const tds = (+form.amount*(+form.tdsRate||0)/100).toFixed(2);
+      setForm(f=>({...f, tdsAmount:tds, netAfterTds:(+form.amount-+tds).toFixed(2)}));
+    } else if (!form.tdsApplicable) {
+      setForm(f=>({...f, tdsAmount:"", netAfterTds:""}));
+    }
+  },[form.tdsRate, form.amount, form.tdsApplicable]);
   const validate = () => {
     const e = {};
     if (!form.paymentDate) e.paymentDate = "Required";
-    if (!form.amount || +form.amount <= 0) e.amount = "Required";
-    if (!form.mode)        e.mode        = "Required";
-    if (!form.reference)   e.reference   = "Reference number is required";
-    setErrors(e);
-    return Object.keys(e).length === 0;
+    if (!form.amount || +form.amount<=0) e.amount = "Required";
+    if (!form.mode) e.mode = "Required";
+    if (!form.reference) e.reference = "UTR / reference number required";
+    setErrors(e); return Object.keys(e).length===0;
   };
-
-  const submit = () => { if (validate()) onConfirm(form); };
-
   return (
     <Modal title={`Record payment — ${invoice?.invoice_number||invoice?.id}`} onClose={onClose}
-      footer={<><Btn variant="secondary" onClick={onClose}>Cancel</Btn><Btn variant="primary" onClick={submit}>Confirm payment</Btn></>}>
+      footer={<><Btn variant="secondary" onClick={onClose}>Cancel</Btn><Btn variant="primary" onClick={()=>{ if(validate()) onConfirm(form); }}>Confirm payment</Btn></>}>
       <div style={{ background:T.gray50, borderRadius:8, padding:12, marginBottom:16, fontSize:13 }}>
-        Grand total: <strong style={{ color:T.blue, fontSize:16 }}>{fmtCurrency(invoice?.grand_total)}</strong>
-        {invoice?.advance_adjusted > 0 && <span style={{ color:T.orange, marginLeft:12 }}>Less advance: {fmtCurrency(invoice.advance_adjusted)} → Net payable: <strong>{fmtCurrency(invoice.net_payable)}</strong></span>}
+        Amount: <strong style={{ color:T.blue, fontSize:16 }}>{fmtCurrency(invoice?.grand_total||invoice?.totalAmount)}</strong>
+        {invoice?.advance_adjusted>0 && <span style={{ color:"#ea580c", marginLeft:12 }}>Less advance: {fmtCurrency(invoice.advance_adjusted)} → Net: <strong>{fmtCurrency(invoice.net_payable)}</strong></span>}
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-        <Inp label="Payment date *" type="date" value={form.paymentDate} onChange={set("paymentDate")} error={errors.paymentDate} />
-        <Inp label="Amount paid (₹) *" type="number" value={form.amount} onChange={set("amount")} error={errors.amount} />
-        <Sel label="Payment mode *" value={form.mode} onChange={set("mode")} error={errors.mode}>
-          {PAYMENT_MODES.map(m => <option key={m}>{m}</option>)}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+        <Inp label="Payment date *" type="date" value={form.paymentDate} onChange={set("paymentDate")} error={errors.paymentDate}/>
+        <Inp label="Amount paid (₹) *" type="number" value={form.amount} onChange={set("amount")} error={errors.amount}/>
+        <Sel label="Payment mode" value={form.mode} onChange={set("mode")}>
+          {["NEFT","RTGS","IMPS","Cheque","UPI","Cash","DD","Credit Card"].map(m=><option key={m}>{m}</option>)}
         </Sel>
-        <Inp label="Reference / UTR / cheque number *" value={form.reference} onChange={set("reference")} placeholder="UTR or cheque no." error={errors.reference} />
-        <Inp label="Bank account (from)" value={form.bank} onChange={set("bank")} placeholder="Our bank account" />
-        <Inp label="Remarks" value={form.remarks} onChange={set("remarks")} />
+        <Inp label="UTR / reference / cheque no. *" value={form.reference} onChange={set("reference")} error={errors.reference}/>
+        <Sel label="Paid from (our bank)" value={form.ourBank} onChange={set("ourBank")}>
+          {["SBI - Current A/c","ICICI - Current A/c","Credit Card - HDFC","Credit Card - ICICI"].map(b=><option key={b}>{b}</option>)}
+        </Sel>
+        <Inp label="Remarks (optional)" value={form.remarks} onChange={set("remarks")}/>
+      </div>
+      <div style={{ border:"1px solid #e2e8f0", borderRadius:8, padding:14 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:form.tdsApplicable?14:0 }}>
+          <input type="checkbox" id="tds-chk" checked={form.tdsApplicable} onChange={e=>setForm(f=>({...f,tdsApplicable:e.target.checked}))} style={{ width:16, height:16 }}/>
+          <label htmlFor="tds-chk" style={{ fontSize:13, fontWeight:600, cursor:"pointer" }}>TDS applicable on this payment</label>
+        </div>
+        {form.tdsApplicable && (
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginTop:12 }}>
+            <div style={{ gridColumn:"1/-1" }}>
+              <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#475569", marginBottom:5 }}>TDS section</label>
+              <select value={form.tdsSection} onChange={set("tdsSection")} style={{ width:"100%", padding:"9px 11px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13 }}>
+                {["194C - Contractor (1%)","194C - Contractor (2%)","194J - Professional (10%)","194J - Technical (2%)","194H - Commission (5%)","194I - Rent (10%)","194Q - Purchase (0.1%)"].map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <Inp label="TDS rate (%)" type="number" value={form.tdsRate} onChange={set("tdsRate")}/>
+            <Inp label="TDS amount (₹)" value={form.tdsAmount} readOnly/>
+            <Inp label="Net after TDS (₹)" value={form.netAfterTds} readOnly/>
+            <div style={{ gridColumn:"1/-1", background:"#fef3c7", borderRadius:6, padding:"8px 12px", fontSize:12, color:"#92400e" }}>
+              ⚠️ TDS of ₹{form.tdsAmount} will be deducted. Vendor receives ₹{form.netAfterTds}. Issue Form 16A quarterly.
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   );
 }
 
 // ─── Registration ─────────────────────────────────────────────────────────────
-const REG_STEPS = ["Company details","Contact & login","Bank details","Review & submit"];
+const REG_STEPS = ["Company details","Contact & login","MSME & compliance","Bank details","Review & submit"];
 
 function RegistrationPage({ onSuccess, onLoginClick }) {
   const [step, setStep]   = useState(0);
-  const [form, setForm]   = useState({ company_name:"", pan:"", gstin:"", category:"", contact_person:"", mobile:"", email:"", password:"", confirmPassword:"", city:"", state:"Maharashtra", pincode:"", bank_name:"", account_number:"", ifsc:"", account_type:"Current" });
+  const [form, setForm]   = useState({ company_name:"", pan:"", gstin:"", category:"", contact_person:"", mobile:"", email:"", password:"", confirmPassword:"", city:"", state:"Maharashtra", pincode:"", msme_type:"Not Applicable", msme_udyam:"", tds_category:"Not Applicable", credit_period:"30 days", bank_name:"", account_number:"", ifsc:"", account_type:"Current" });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [done, setDone]   = useState(false);
@@ -673,9 +717,12 @@ function RegistrationPage({ onSuccess, onLoginClick }) {
       if (!form.city) e.city = "Required";
     }
     if (step===2) {
+      if (form.msme_type && form.msme_type!=="Not Applicable" && !form.msme_udyam) e.msme_udyam = "Udyam number required for MSME vendors";
+    }
+    if (step===3) {
       if (!form.bank_name) e.bank_name = "Required";
       if (!form.account_number) e.account_number = "Required";
-      if (!form.ifsc || form.ifsc.length!==11) e.ifsc = "IFSC must be 11 characters";
+      if (form.ifsc && form.ifsc.length !== 11) e.ifsc = "IFSC must be 11 characters";
     }
     setErrors(e);
     return Object.keys(e).length===0;
@@ -689,8 +736,9 @@ function RegistrationPage({ onSuccess, onLoginClick }) {
         company_name: form.company_name, gstin: form.gstin||null, pan: form.pan,
         contact_person: form.contact_person, mobile: form.mobile,
         city: form.city, state: form.state, pincode: form.pincode,
-        category: form.category, bank_name: form.bank_name,
-        account_number: form.account_number, ifsc: form.ifsc, account_type: form.account_type,
+        category: form.category, msme_type: form.msme_type, msme_udyam: form.msme_udyam||null,
+        tds_category: form.tds_category, credit_period: form.credit_period,
+        bank_name: form.bank_name, account_number: form.account_number, ifsc: form.ifsc, account_type: form.account_type,
         status: "pending",
       }]);
       if (error) throw error;
@@ -775,19 +823,46 @@ function RegistrationPage({ onSuccess, onLoginClick }) {
               )}
               {step===2 && (
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+                  <div style={{ gridColumn:"1/-1", background:"#eff6ff", border:"1px solid #bfdbfe", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#1e40af" }}>
+                    MSME and TDS details help GDPL comply with legal requirements. All fields are optional unless you are MSME registered.
+                  </div>
+                  <div style={{ gridColumn:"1/-1" }}>
+                    <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#475569", marginBottom:5 }}>MSME registration type</label>
+                    <select value={form.msme_type||"Not Applicable"} onChange={set("msme_type")} style={{ width:"100%", padding:"9px 11px", border:"1px solid #e2e8f0", borderRadius:8, fontSize:13, background:"#fff" }}>
+                      {["Not Applicable","Micro Enterprise","Small Enterprise","Medium Enterprise"].map(m=><option key={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  {form.msme_type && form.msme_type!=="Not Applicable" && (
+                    <div style={{ gridColumn:"1/-1" }}>
+                      <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#475569", marginBottom:5 }}>Udyam Registration Number *</label>
+                      <input value={form.msme_udyam||""} onChange={set("msme_udyam")} placeholder="UDYAM-MH-27-0000000" style={{ width:"100%", padding:"9px 11px", border:`1px solid ${errors.msme_udyam?T.red:"#e2e8f0"}`, borderRadius:8, fontSize:13 }}/>
+                      {errors.msme_udyam && <p style={{ fontSize:11, color:T.red, marginTop:3 }}>{errors.msme_udyam}</p>}
+                    </div>
+                  )}
+                  <Sel label="TDS category" value={form.tds_category||"Not Applicable"} onChange={set("tds_category")}>
+                    {["Not Applicable","Individual / HUF","Company","Partnership Firm","LLP","Trust"].map(t=><option key={t}>{t}</option>)}
+                  </Sel>
+                  <Sel label="Credit period (optional)" value={form.credit_period||"30 days"} onChange={set("credit_period")}>
+                    {["Immediate","7 days","15 days","30 days","45 days","60 days","90 days"].map(c=><option key={c}>{c}</option>)}
+                  </Sel>
+                </div>
+              )}
+              {step===3 && (
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
                   <InfoBox>Bank details must match the company name. Used for payment processing.</InfoBox>
                   <Inp label="Bank name *" value={form.bank_name} onChange={set("bank_name")} placeholder="State Bank of India" error={errors.bank_name} />
                   <Sel label="Account type" value={form.account_type} onChange={set("account_type")}>
                     <option>Current</option><option>Savings</option>
                   </Sel>
                   <Inp label="Account number *" value={form.account_number} onChange={set("account_number")} error={errors.account_number} />
-                  <Inp label="IFSC code *" value={form.ifsc} onChange={set("ifsc")} placeholder="SBIN0001234" maxLength={11} error={errors.ifsc} />
+                  <Inp label="IFSC code" value={form.ifsc} onChange={set("ifsc")} placeholder="SBIN0001234" maxLength={11} error={errors.ifsc} />
                 </div>
               )}
-              {step===3 && (
+              {step===4 && (
                 <div>
                   {[["Company",[[" Name",form.company_name],["PAN",form.pan],["GSTIN",form.gstin||"Not registered"],["Category",form.category]]],
                     ["Contact",[[" Person",form.contact_person],["Mobile",form.mobile],["Email",form.email],["City",`${form.city}, ${form.state}`]]],
+                    ["MSME & compliance",[["MSME type",form.msme_type], ["Udyam number",form.msme_udyam||"Not applicable"], ["TDS category",form.tds_category], ["Credit period",form.credit_period]]],
                     ["Bank",[["Bank",form.bank_name],["Account",form.account_number],["IFSC",form.ifsc]]]
                   ].map(([section, fields]) => (
                     <div key={section} style={{ background:T.gray50, borderRadius:10, padding:16, marginBottom:12 }}>
@@ -1050,6 +1125,28 @@ function VendorPortal({ vendor, onLogout }) {
             </div>
           )}
 
+          {/* Reports & Excel */}
+          {!loading && page==="reports" && (
+            <div>
+              <h1 style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontSize:18, fontWeight:700, color:T.gray800, marginBottom:6 }}>Reports & Excel</h1>
+              <p style={{ color:T.gray500, fontSize:13, marginBottom:16 }}>Download operational data as Excel workbooks for reconciliation and reporting.</p>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:18 }}>
+                <Card><CardH title="Vendor master" /><p style={{ color:T.gray500, fontSize:12, marginBottom:14 }}>All registered vendors, GST classification, MSME and TDS details.</p><Btn variant="primary" onClick={exportVendors}>⬇ Export vendors</Btn></Card>
+                <Card><CardH title="Invoice register" /><p style={{ color:T.gray500, fontSize:12, marginBottom:14 }}>Invoice amounts, GST, advances, TDS, payment and status data.</p><Btn variant="primary" onClick={exportInvoices}>⬇ Export invoices</Btn></Card>
+                <Card><CardH title="Payment register" /><p style={{ color:T.gray500, fontSize:12, marginBottom:14 }}>Recorded payments with UTR, bank, TDS deductions and net paid amounts.</p><Btn variant="primary" onClick={exportPayments}>⬇ Export payments</Btn></Card>
+              </div>
+              <Card>
+                <CardH title="Quick summary" />
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+                  <StatCard label="Vendors" value={vendors.length} color={T.blue} />
+                  <StatCard label="Invoices" value={invoices.length} color={T.purple} />
+                  <StatCard label="Paid" value={fmtCurrency(stats.totalPaid)} color={T.green} />
+                  <StatCard label="Outstanding" value={fmtCurrency(stats.outstanding)} color={T.orange} />
+                </div>
+              </Card>
+            </div>
+          )}
+
           {/* Advances */}
           {!loading && page==="advances" && (
             <div>
@@ -1189,7 +1286,7 @@ function AdminPanel({ onLogout }) {
     toast$(`Invoice rejected.`,"error"); setDI(null); loadAll();
   };
   const markPaid = async (inv, form) => {
-    await sb.from("invoices").update({ status:"paid", payment_date:form.paymentDate, payment_mode:form.mode, payment_ref:form.reference, paid_amount:+form.amount, payment_bank:form.bank, payment_remarks:form.remarks }).eq("id",inv.id);
+    await sb.from("invoices").update({ status:"paid", payment_date:form.paymentDate, payment_mode:form.mode, payment_ref:form.reference, paid_amount:+form.amount, payment_bank:form.ourBank||form.bank||null, payment_remarks:form.remarks, tds_applicable:!!form.tdsApplicable, tds_section:form.tdsApplicable?form.tdsSection:null, tds_rate:form.tdsApplicable?(+form.tdsRate||0):0, tds_amount:form.tdsApplicable?(+form.tdsAmount||0):0 }).eq("id",inv.id);
     toast$(`Payment recorded for ${inv.invoice_number||inv.id}!`); setPM(null); setDI(null); loadAll();
   };
   const approveAdv = async adv => {
@@ -1213,40 +1310,63 @@ function AdminPanel({ onLogout }) {
 
   const getVendor = id => vendors.find(v=>v.id===id);
 
-  const navItems = [
-    { id:"dashboard", label:"Dashboard",    icon:"⊞" },
-    { id:"vendors",   label:"Vendors",      icon:"🏢", badge:stats.pendingVendors },
-    { id:"invoices",  label:"Invoices",     icon:"📄", badge:stats.pendingInvoices },
-    { id:"advances",  label:"Advances",     icon:"💰", badge:stats.pendingAdv },
-    { id:"payments",  label:"Payments",     icon:"💳" },
-  ];
+  const downloadExcel = (rows, filename, sheetName = "Report") => {
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+  
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+    XLSX.writeFile(wb, filename);
+  };
 
-  return (
-    <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column" }}>
-      <div style={{ background:T.navy, height:52, display:"flex", alignItems:"center", padding:"0 20px", gap:12, flexShrink:0 }}>
-        <div style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontSize:16, fontWeight:800, color:T.amber }}>GDPL</div>
-        <div style={{ width:1, height:16, background:T.gray600 }} />
-        <span style={{ fontSize:12, color:"#94a3b8" }}>Admin — Vendor Management</span>
-        <div style={{ flex:1 }} />
-        <div style={{ width:28, height:28, borderRadius:"50%", background:T.orange, color:T.white, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>AD</div>
-        <span style={{ fontSize:12, color:"#cbd5e1" }}>GDPL Admin</span>
-        <Btn size="sm" variant="ghost" onClick={onLogout} style={{ color:"#94a3b8", fontSize:12 }}>Sign out</Btn>
-      </div>
+    const exportVendors = () => downloadExcel(vendors.map(v=>({
+      ID:v.id, Company:v.company_name, GSTIN:v.gstin||"", GST_Type:getGSTType(v.gstin).label, PAN:v.pan||"", Category:v.category||"", MSME_Type:v.msme_type||"Not Applicable", Udyam:v.msme_udyam||"", TDS_Category:v.tds_category||"Not Applicable", Credit_Period:v.credit_period||"", Contact:v.contact_person||"", Mobile:v.mobile||"", Email:v.email||"", City:v.city||"", State:v.state||"", Status:v.status||""
+    })), `vendors-${today()}.xlsx`, "Vendors");
+    const exportInvoices = () => downloadExcel(invoices.map(i=>({
+      Invoice:i.invoice_number||i.id, Vendor:getVendor(i.vendor_id)?.company_name||"", GSTIN:getVendor(i.vendor_id)?.gstin||"", GST_Type:i.gst_type||getGSTType(getVendor(i.vendor_id)?.gstin).type, Invoice_Date:i.invoice_date||"", PO:i.po_number||"", Taxable:i.sub_total||0,
+      CGST:i.cgst||0,
+      SGST:i.sgst||0,
+      IGST:i.igst||0,
+      Grand_Total:i.grand_total||0, Advance_Adjusted:i.advance_adjusted||0, Net_Payable:i.net_payable||i.grand_total||0, TDS_Applicable:i.tds_applicable?"Yes":"No", TDS_Section:i.tds_section||"", TDS_Rate:i.tds_rate||0, TDS_Amount:i.tds_amount||0, Paid_Amount:i.paid_amount||0, Payment_Date:i.payment_date||"", Payment_Mode:i.payment_mode||"", Payment_Ref:i.payment_ref||"", Payment_Bank:i.payment_bank||"", Status:i.status||""
+    })), `invoices-${today()}.xlsx`, "Invoices");
+    const exportPayments = () => downloadExcel(invoices.map(i=>({
+      Invoice:i.invoice_number||i.id, Vendor:getVendor(i.vendor_id)?.company_name||"", Amount_Paid:i.paid_amount||0, Payment_Date:i.payment_date||"", Payment_Mode:i.payment_mode||"", UTR_Reference:i.payment_ref||"", Bank:i.payment_bank||"", TDS_Amount:i.tds_amount||0, Net_After_TDS:((+i.paid_amount||0)-(+i.tds_amount||0)), Remarks:i.payment_remarks||""
+    })), `payments-${today()}.xlsx`, "Payments");
 
-      <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
-        <div style={{ width:210, background:T.white, borderRight:`1px solid ${T.gray200}`, padding:"12px 0", flexShrink:0 }}>
-          {navItems.map(n => (
-            <div key={n.id} onClick={()=>setPage(n.id)}
-              style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 16px", cursor:"pointer", background:page===n.id?T.blueLight:"transparent", color:page===n.id?T.blue:T.gray600, fontSize:13, fontWeight:page===n.id?600:400, borderLeft:`3px solid ${page===n.id?T.blue:"transparent"}` }}>
-              <span style={{ fontSize:15 }}>{n.icon}</span>
-              <span style={{ flex:1 }}>{n.label}</span>
-              {n.badge>0 && <span style={{ background:T.red, color:T.white, borderRadius:10, fontSize:10, fontWeight:700, padding:"1px 6px" }}>{n.badge}</span>}
-            </div>
-          ))}
+    const navItems = [
+      { id:"dashboard", label:"Dashboard",    icon:"⊞" },
+      { id:"vendors",   label:"Vendors",      icon:"🏢", badge:stats.pendingVendors },
+      { id:"invoices",  label:"Invoices",     icon:"📄", badge:stats.pendingInvoices },
+      { id:"advances",  label:"Advances",     icon:"💰", badge:stats.pendingAdv },
+      { id:"payments",  label:"Payments",     icon:"💳" },
+      { id:"reports",   label:"Reports & Excel", icon:"📊" },
+    ];
+
+    return (
+      <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column" }}>
+        <div style={{ background:T.navy, height:52, display:"flex", alignItems:"center", padding:"0 20px", gap:12, flexShrink:0 }}>
+          <div style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", fontSize:16, fontWeight:800, color:T.amber }}>GDPL</div>
+          <div style={{ width:1, height:16, background:T.gray600 }} />
+          <span style={{ fontSize:12, color:"#94a3b8" }}>Admin — Vendor Management</span>
+          <div style={{ flex:1 }} />
+          <div style={{ width:28, height:28, borderRadius:"50%", background:T.orange, color:T.white, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700 }}>AD</div>
+          <span style={{ fontSize:12, color:"#cbd5e1" }}>GDPL Admin</span>
+          <Btn size="sm" variant="ghost" onClick={onLogout} style={{ color:"#94a3b8", fontSize:12 }}>Sign out</Btn>
         </div>
 
-        <div style={{ flex:1, overflowY:"auto", padding:22, background:T.gray50 }}>
-          {loading && <div style={{ textAlign:"center", padding:60, color:T.gray400 }}>Loading…</div>}
+        <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
+          <div style={{ width:210, background:T.white, borderRight:`1px solid ${T.gray200}`, padding:"12px 0", flexShrink:0 }}>
+            {navItems.map(n => (
+              <div key={n.id} onClick={()=>setPage(n.id)}
+                style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 16px", cursor:"pointer", background:page===n.id?T.blueLight:"transparent", color:page===n.id?T.blue:T.gray600, fontSize:13, fontWeight:page===n.id?600:400, borderLeft:`3px solid ${page===n.id?T.blue:"transparent"}` }}>
+                <span style={{ fontSize:15 }}>{n.icon}</span>
+                <span style={{ flex:1 }}>{n.label}</span>
+                {n.badge>0 && <span style={{ background:T.red, color:T.white, borderRadius:10, fontSize:10, fontWeight:700, padding:"1px 6px" }}>{n.badge}</span>}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ flex:1, overflowY:"auto", padding:22, background:T.gray50 }}>
+            {loading && <div style={{ textAlign:"center", padding:60, color:T.gray400 }}>Loading…</div>}
 
           {/* Admin Dashboard */}
           {!loading && page==="dashboard" && (
@@ -1304,7 +1424,7 @@ function AdminPanel({ onLogout }) {
                     { label:"Contact", key:"contact_person" },
                     { label:"Mobile", key:"mobile" },
                     { label:"Category", key:"category" },
-                    { label:"GSTIN", render:v=>v.gstin||<span style={{ color:T.gray400, fontSize:11 }}>Unregistered</span> },
+                    { label:"GSTIN", render:v=><div style={{ display:"flex", flexDirection:"column", gap:4 }}>{v.gstin||<span style={{ color:T.gray400, fontSize:11 }}>Unregistered</span>}<GSTTag gstin={v.gstin}/></div> },
                     { label:"Status", render:v=><Pill status={v.status} map={VENDOR_STATUS_META} /> },
                     { label:"Actions", render:v=>v.status==="pending"?(<div style={{ display:"flex", gap:5 }}><Btn size="sm" variant="success" onClick={()=>approveVendor(v)}>Approve</Btn><Btn size="sm" variant="danger" onClick={()=>rejectVendor(v)}>Reject</Btn></div>):<Btn size="sm" variant="ghost" onClick={()=>setDV(v)}>View</Btn> },
                   ]}
@@ -1377,7 +1497,96 @@ function AdminPanel({ onLogout }) {
               </Card>
             </div>
           )}
+          {/* Reports & Excel */}
+          {!loading && page==="reports" && (
+            <div>
+              <div style={{ marginBottom:20 }}>
+                <h1 style={{
+                  fontFamily:"'Plus Jakarta Sans',sans-serif",
+                  fontSize:20,
+                  fontWeight:700,
+                  color:T.gray800,
+                  marginBottom:6
+                }}>
+                  Reports & Excel
+                </h1>
+                <p style={{ color:T.gray500, fontSize:13 }}>
+                  Download operational data as Excel workbooks for reconciliation and reporting.
+                </p>
+              </div>
 
+              <div style={{
+                display:"grid",
+                gridTemplateColumns:"repeat(3,1fr)",
+                gap:14,
+                marginBottom:18
+              }}>
+                <Card>
+                  <CardH title="Vendor master" />
+                  <p style={{ color:T.gray500, fontSize:12, marginBottom:14 }}>
+                    All registered vendors, GST classification, MSME and TDS details.
+                  </p>
+                  <Btn variant="primary" onClick={exportVendors}>
+                    ⬇ Export vendors
+                  </Btn>
+                </Card>
+
+                <Card>
+                  <CardH title="Invoice register" />
+                  <p style={{ color:T.gray500, fontSize:12, marginBottom:14 }}>
+                    Invoice amounts, GST, advances, TDS, payment and status data.
+                  </p>
+                  <Btn variant="primary" onClick={exportInvoices}>
+                    ⬇ Export invoices
+                  </Btn>
+                </Card>
+
+                <Card>
+                  <CardH title="Payment register" />
+                  <p style={{ color:T.gray500, fontSize:12, marginBottom:14 }}>
+                    Recorded payments with UTR, bank, TDS deductions and net paid amounts.
+                  </p>
+                  <Btn variant="primary" onClick={exportPayments}>
+                    ⬇ Export payments
+                  </Btn>
+                </Card>
+              </div>
+
+              <Card>
+                <CardH title="Quick summary" />
+
+                <div style={{
+                  display:"grid",
+                  gridTemplateColumns:"repeat(4,1fr)",
+                  gap:12
+                }}>
+                  <StatCard
+                    label="Vendors"
+                    value={vendors.length}
+                    color={T.blue}
+                  />
+
+                  <StatCard
+                    label="Invoices"
+                    value={invoices.length}
+                    color={T.purple}
+                  />
+
+                  <StatCard
+                    label="Paid"
+                    value={fmtCurrency(stats.totalPaid)}
+                    color={T.green}
+                  />
+
+                  <StatCard
+                    label="Outstanding"
+                    value={fmtCurrency(stats.outstanding)}
+                    color={T.orange}
+                  />
+                </div>
+              </Card>
+            </div>
+          )}
           {/* Payments */}
           {!loading && page==="payments" && (
             <div>
@@ -1428,7 +1637,7 @@ function AdminPanel({ onLogout }) {
             <Btn variant="ghost" onClick={()=>{setDI(null);setSH(false)}}>Close</Btn>
           </div>}>
           <div style={{ background:T.gray50, borderRadius:8, padding:12, marginBottom:14, fontSize:12, color:T.gray600 }}>
-            <strong>Vendor:</strong> {getVendor(detailInv.vendor_id)?.company_name} &nbsp;|&nbsp; GSTIN: {getVendor(detailInv.vendor_id)?.gstin||"Unregistered"} &nbsp;|&nbsp; Type: {detailInv.doc_type}
+            <strong>Vendor:</strong> {getVendor(detailInv.vendor_id)?.company_name} &nbsp;|&nbsp; GSTIN: {getVendor(detailInv.vendor_id)?.gstin||"Unregistered"} &nbsp;|&nbsp; <GSTTag gstin={getVendor(detailInv.vendor_id)?.gstin}/> &nbsp;|&nbsp; Type: {detailInv.doc_type}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:14 }}>
             {[["Invoice #",detailInv.invoice_number],["Invoice date",fmtDate(detailInv.invoice_date)],["PO number",detailInv.po_number],["Sub-total (taxable)",fmtCurrency(detailInv.sub_total)],["Total GST",detailInv.gst_applicable?fmtCurrency(detailInv.total_gst):"Nil (Not applicable)"],["Grand total",fmtCurrency(detailInv.grand_total)],["Advance adjusted",fmtCurrency(detailInv.advance_adjusted)],["Net payable",fmtCurrency(detailInv.net_payable||detailInv.grand_total)],["GST type",detailInv.gst_applicable?(detailInv.supply_state==="Maharashtra"?"CGST + SGST":"IGST"):"Not applicable"]].map(([l,v]) => (
