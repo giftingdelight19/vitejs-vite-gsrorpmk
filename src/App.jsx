@@ -1321,13 +1321,117 @@ function AdminPanel({ onLogout }) {
     const exportVendors = () => downloadExcel(vendors.map(v=>({
       ID:v.id, Company:v.company_name, GSTIN:v.gstin||"", GST_Type:getGSTType(v.gstin).label, PAN:v.pan||"", Category:v.category||"", MSME_Type:v.msme_type||"Not Applicable", Udyam:v.msme_udyam||"", TDS_Category:v.tds_category||"Not Applicable", Credit_Period:v.credit_period||"", Contact:v.contact_person||"", Mobile:v.mobile||"", Email:v.email||"", City:v.city||"", State:v.state||"", Status:v.status||""
     })), `vendors-${today()}.xlsx`, "Vendors");
-    const exportInvoices = () => downloadExcel(invoices.map(i=>({
-      Invoice:i.invoice_number||i.id, Vendor:getVendor(i.vendor_id)?.company_name||"", GSTIN:getVendor(i.vendor_id)?.gstin||"", GST_Type:i.gst_type||getGSTType(getVendor(i.vendor_id)?.gstin).type, Invoice_Date:i.invoice_date||"", PO:i.po_number||"", Taxable:i.sub_total||0,
-      CGST:i.cgst||0,
-      SGST:i.sgst||0,
-      IGST:i.igst||0,
-      Grand_Total:i.grand_total||0, Advance_Adjusted:i.advance_adjusted||0, Net_Payable:i.net_payable||i.grand_total||0, TDS_Applicable:i.tds_applicable?"Yes":"No", TDS_Section:i.tds_section||"", TDS_Rate:i.tds_rate||0, TDS_Amount:i.tds_amount||0, Paid_Amount:i.paid_amount||0, Payment_Date:i.payment_date||"", Payment_Mode:i.payment_mode||"", Payment_Ref:i.payment_ref||"", Payment_Bank:i.payment_bank||"", Status:i.status||""
-    })), `invoices-${today()}.xlsx`, "Invoices");
+    const exportInvoices = () => {
+      const rows = [];
+    
+      invoices.forEach(i => {
+        const vendor = getVendor(i.vendor_id);
+    
+        const items =
+          i.items ||
+          i.invoice_items ||
+          i.products ||
+          i.line_items ||
+          [];
+    
+        if (Array.isArray(items) && items.length > 0) {
+          items.forEach(item => {
+            rows.push({
+              Invoice: i.invoice_number || i.id,
+              Vendor: vendor?.company_name || "",
+              GSTIN: vendor?.gstin || "",
+              GST_Type: i.gst_type || getGSTType(vendor?.gstin).type,
+              Invoice_Date: i.invoice_date || "",
+              PO: i.po_number || "",
+    
+              // Product / item details
+              Description: item.description || "",
+              HSN_SAC: item.hsn_sac || item.hsn || item.sac || "",
+              Unit: item.unit || "",
+              Qty: item.qty || item.quantity || 0,
+              Rate: item.rate || 0,
+              Taxable: item.taxable || item.taxable_amount || 0,
+              GST_Percent: item.gst_percent || item.gst_rate || 0,
+              GST_Amount: item.gst_amt || item.gst_amount || 0,
+              Item_Total: item.total || item.total_amount || 0,
+    
+              // Invoice-level GST
+              CGST: i.cgst || 0,
+              SGST: i.sgst || 0,
+              IGST: i.igst || 0,
+    
+              // IMPORTANT:
+              // Full invoice total repeated on EVERY product line
+              Grand_Total: i.grand_total || 0,
+    
+              Advance_Adjusted: i.advance_adjusted || 0,
+              Net_Payable: i.net_payable || i.grand_total || 0,
+    
+              TDS_Applicable: i.tds_applicable ? "Yes" : "No",
+              TDS_Section: i.tds_section || "",
+              TDS_Rate: i.tds_rate || 0,
+              TDS_Amount: i.tds_amount || 0,
+    
+              Paid_Amount: i.paid_amount || 0,
+              Payment_Date: i.payment_date || "",
+              Payment_Mode: i.payment_mode || "",
+              Payment_Ref: i.payment_ref || "",
+              Payment_Bank: i.payment_bank || "",
+    
+              Status: i.status || ""
+            });
+          });
+        } else {
+          // Invoice without item details
+          rows.push({
+            Invoice: i.invoice_number || i.id,
+            Vendor: vendor?.company_name || "",
+            GSTIN: vendor?.gstin || "",
+            GST_Type: i.gst_type || getGSTType(vendor?.gstin).type,
+            Invoice_Date: i.invoice_date || "",
+            PO: i.po_number || "",
+    
+            Description: "",
+            HSN_SAC: "",
+            Unit: "",
+            Qty: 0,
+            Rate: 0,
+            Taxable: i.sub_total || 0,
+            GST_Percent: 0,
+            GST_Amount: 0,
+            Item_Total: i.grand_total || 0,
+    
+            CGST: i.cgst || 0,
+            SGST: i.sgst || 0,
+            IGST: i.igst || 0,
+    
+            Grand_Total: i.grand_total || 0,
+    
+            Advance_Adjusted: i.advance_adjusted || 0,
+            Net_Payable: i.net_payable || i.grand_total || 0,
+    
+            TDS_Applicable: i.tds_applicable ? "Yes" : "No",
+            TDS_Section: i.tds_section || "",
+            TDS_Rate: i.tds_rate || 0,
+            TDS_Amount: i.tds_amount || 0,
+    
+            Paid_Amount: i.paid_amount || 0,
+            Payment_Date: i.payment_date || "",
+            Payment_Mode: i.payment_mode || "",
+            Payment_Ref: i.payment_ref || "",
+            Payment_Bank: i.payment_bank || "",
+    
+            Status: i.status || ""
+          });
+        }
+      });
+    
+      downloadExcel(
+        rows,
+        `invoices-${today()}.xlsx`,
+        "Invoices"
+      );
+    };
     const exportPayments = () => downloadExcel(invoices.map(i=>({
       Invoice:i.invoice_number||i.id, Vendor:getVendor(i.vendor_id)?.company_name||"", Amount_Paid:i.paid_amount||0, Payment_Date:i.payment_date||"", Payment_Mode:i.payment_mode||"", UTR_Reference:i.payment_ref||"", Bank:i.payment_bank||"", TDS_Amount:i.tds_amount||0, Net_After_TDS:((+i.paid_amount||0)-(+i.tds_amount||0)), Remarks:i.payment_remarks||""
     })), `payments-${today()}.xlsx`, "Payments");
