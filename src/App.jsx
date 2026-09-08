@@ -368,7 +368,8 @@ function InvoiceModal({ vendor, advancePayments=[], onClose, onSubmit }) {
 
       {/* GDPL details (read only) */}
       <div style={{ background:T.blueLight, borderRadius:8, padding:"10px 14px", fontSize:12, color:"#1e40af", marginBottom:14 }}>
-        <strong>Bill to:</strong> {GDPL_NAME} &nbsp;|&nbsp; GSTIN: {GDPL_GSTIN}
+      <strong>Bill to:</strong> {GDPL_NAME} &nbsp;|&nbsp; GSTIN: {GDPL_GSTIN} &nbsp;|&nbsp; State: {GDPL_STATE}
+{form.vendorGstin?.length===15 && <span style={{marginLeft:12,fontWeight:600}}>→ Tax type: <GSTTag gstin={form.vendorGstin}/></span>}
       </div>
 
       {/* Line items */}
