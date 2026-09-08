@@ -858,7 +858,7 @@ function LoginPage({ onLogin, onRegisterClick }) {
           ))}
         </div>
         <div style={{ flex:1 }} />
-        <div style={{ fontSize:11, color:"#475569" }}>© 2025 GDPL. Secure vendor portal.</div>
+        <div style={{ fontSize:11, color:"#475569" }}>© 2025 GDPL. Vendor Portal v2.</div>
       </div>
       <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", padding:40 }}>
         <div style={{ width:"100%", maxWidth:420 }}>
