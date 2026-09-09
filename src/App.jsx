@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
+import POManagement from "./POManagement";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -1014,11 +1015,12 @@ function VendorPortal({ vendor, onLogout }) {
   };
 
   const navItems = [
-    { id:"dashboard", label:"Dashboard",         icon:"⊞" },
-    { id:"invoices",  label:"My invoices",        icon:"📄" },
-    { id:"advances",  label:"Advance payments",   icon:"💰" },
-    { id:"payments",  label:"Payment history",    icon:"💳" },
-    { id:"profile",   label:"My profile",         icon:"👤" },
+    { id:"dashboard",       label:"Dashboard",        icon:"⊞" },
+    { id:"invoices",        label:"My invoices",      icon:"📄" },
+    { id:"purchase-orders", label:"Purchase Orders",  icon:"📋" },
+    { id:"advances",        label:"Advance payments", icon:"💰" },
+    { id:"payments",        label:"Payment history",  icon:"💳" },
+    { id:"profile",         label:"My profile",       icon:"👤" },
   ];
 
   return (
@@ -1095,6 +1097,19 @@ function VendorPortal({ vendor, onLogout }) {
               </Card>
             </div>
           )}
+
+          {/* Purchase Orders */}
+{!loading && page==="purchase-orders" && (
+  <POManagement
+    supabase={sb}
+    vendors={[vendor]}
+    mode="vendor"
+    vendorId={vendor?.id}
+    onCreateInvoice={(po) => {
+      console.log("Create invoice from PO:", po);
+    }}
+  />
+)}
 
           {/* Invoices */}
           {!loading && page==="invoices" && (
@@ -1439,6 +1454,7 @@ function AdminPanel({ onLogout }) {
     const navItems = [
       { id:"dashboard", label:"Dashboard",    icon:"⊞" },
       { id:"vendors",   label:"Vendors",      icon:"🏢", badge:stats.pendingVendors },
+      { id:"purchase-orders", label:"Purchase Orders",  icon:"📋" },
       { id:"invoices",  label:"Invoices",     icon:"📄", badge:stats.pendingInvoices },
       { id:"advances",  label:"Advances",     icon:"💰", badge:stats.pendingAdv },
       { id:"payments",  label:"Payments",     icon:"💳" },
@@ -1538,6 +1554,15 @@ function AdminPanel({ onLogout }) {
               </Card>
             </div>
           )}
+
+           {/* Purchase Orders */}
+{!loading && page==="purchase-orders" && (
+  <POManagement
+    supabase={sb}
+    vendors={vendors}
+    mode="admin"
+  />
+)}
 
           {/* Invoices */}
           {!loading && page==="invoices" && (
