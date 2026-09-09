@@ -287,14 +287,30 @@ function InvoiceModal({ vendor, advancePayments=[], po=null, onClose, onSubmit }
     setSaving(true);
     try {
       let fileUrl = null;
-      if (uploadedFile) {
-        const path = `invoices/${vendor.id}/${Date.now()}_${uploadedFile.name}`;
-        const { error: upErr } = await sb.storage.from("vendor-docs").upload(path, uploadedFile);
-        if (!upErr) {
-          const { data: urlData } = sb.storage.from("vendor-docs").getPublicUrl(path);
-          fileUrl = urlData?.publicUrl;
-        }
-      }
+
+if (uploadedFile) {
+  const path = `invoices/${vendor.id}/${Date.now()}_${uploadedFile.name}`;
+
+  const { error: upErr } = await sb
+    .storage
+    .from("vendor-docs")
+    .upload(path, uploadedFile);
+
+  if (upErr) {
+    throw new Error("Invoice file upload failed: " + upErr.message);
+  }
+
+  const { data: urlData } = sb
+    .storage
+    .from("vendor-docs")
+    .getPublicUrl(path);
+
+  fileUrl = urlData?.publicUrl;
+
+  if (!fileUrl) {
+    throw new Error("Invoice uploaded, but no file URL was generated.");
+  }
+}
       const invId = genInvId();
       const payload = {
         id: invId,
@@ -1137,6 +1153,26 @@ function VendorPortal({ vendor, onLogout }) {
                     { label:"Net payable",  render:r=><strong style={{ color:T.blue }}>{fmtCurrency(r.net_payable||r.grand_total)}</strong> },
                     { label:"Status",       render:r=><Pill status={r.status} /> },
                     { label:"Hold reason",  render:r=>r.hold_reason?<span style={{ color:T.red, fontSize:11 }}>{r.hold_reason.slice(0,40)}…</span>:"–", wrap:true },
+                    {
+                      label:"Attachment",
+                      render:r => r.file_url ? (
+                        <a
+                          href={r.file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            color:T.blue,
+                            fontWeight:600,
+                            textDecoration:"none",
+                            fontSize:12
+                          }}
+                        >
+                          📎 View
+                        </a>
+                      ) : (
+                        <span style={{ color:T.gray400, fontSize:12 }}>None</span>
+                      )
+                    },
                   ]}
                   rows={invoices}
                   emptyMsg="No invoices submitted yet."
