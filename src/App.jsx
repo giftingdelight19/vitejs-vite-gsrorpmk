@@ -212,12 +212,15 @@ function LineItemRow({ item, index, onChange, onRemove, gstApplicable }) {
 }
 
 // ─── Invoice Submit Modal ─────────────────────────────────────────────────────
-function InvoiceModal({ vendor, advancePayments=[], onClose, onSubmit }) {
+function InvoiceModal({ vendor, advancePayments=[], po=null, onClose, onSubmit }) {
   const [docType, setDocType]         = useState("Tax Invoice");
   const [gstApplicable, setGstApp]    = useState(true);
   const [noGstReason, setNoGstReason] = useState("");
   const [form, setForm] = useState({
-    invoiceNumber: "", invoiceDate: today(), poNumber: "", shipTo: "",
+    invoiceNumber: "",
+    invoiceDate: today(),
+    poNumber: po?.po_number || "",
+    shipTo: "",
     vendorGstin: vendor?.gstin || "", paymentTerms: "Net 30", notes: "",
     supplyState: "Maharashtra",
     linkedAdvanceIds: [],
@@ -985,6 +988,7 @@ function VendorPortal({ vendor, onLogout }) {
   const [advances, setAdvances]   = useState([]);
   const [toast, setToast]         = useState(null);
   const [showInvModal, setShowInv] = useState(false);
+  const [selectedPO, setSelectedPO] = useState(null);
   const [showAdvModal, setShowAdv] = useState(false);
   const [loading, setLoading]     = useState(true);
 
@@ -1106,7 +1110,8 @@ function VendorPortal({ vendor, onLogout }) {
     mode="vendor"
     vendorId={vendor?.id}
     onCreateInvoice={(po) => {
-      console.log("Create invoice from PO:", po);
+      setSelectedPO(po);
+      setShowInv(true);
     }}
   />
 )}
@@ -1242,7 +1247,23 @@ function VendorPortal({ vendor, onLogout }) {
         </div>
       </div>
 
-      {showInvModal && <InvoiceModal vendor={vendor} advancePayments={advances} onClose={()=>setShowInv(false)} onSubmit={(id)=>{ setShowInv(false); toast$(`Invoice ${id} submitted successfully!`); loadData(); }} />}
+      {showInvModal && (
+  <InvoiceModal
+    vendor={vendor}
+    advancePayments={advances}
+    po={selectedPO}
+    onClose={() => {
+      setShowInv(false);
+      setSelectedPO(null);
+    }}
+    onSubmit={(id) => {
+      setShowInv(false);
+      setSelectedPO(null);
+      toast$(`Invoice ${id} submitted successfully!`);
+      loadData();
+    }}
+  />
+)}
       {showAdvModal && <AdvanceModal vendor={vendor} onClose={()=>setShowAdv(false)} onSubmit={()=>{ setShowAdv(false); toast$("Advance payment request submitted!"); loadData(); }} />}
       {toast && <Toast {...toast} onDone={()=>setToast(null)} />}
     </div>
