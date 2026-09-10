@@ -217,10 +217,11 @@ function InvoiceModal({ vendor, advancePayments=[], po=null, onClose, onSubmit }
   const [gstApplicable, setGstApp]    = useState(true);
   const [noGstReason, setNoGstReason] = useState("");
   const [form, setForm] = useState({
-    invoiceNumber: "",
-    invoiceDate: today(),
-    poNumber: po?.po_number || "",
-    shipTo: "",
+    invoiceNumber: "", invoiceDate: today(), poNumber: po?.po_number || "",
+    billToAddress: "", billToCity: "", billToState: "Maharashtra", billToPincode: "",
+    shipToAddress: po?.ship_to_address || "", shipToCity: po?.ship_to_city || "",
+    shipToState: po?.ship_to_state || "Maharashtra", shipToPincode: po?.ship_to_pincode || "",
+    shipTo: po?.ship_to || "",
     vendorGstin: vendor?.gstin || "", paymentTerms: "Net 30", notes: "",
     supplyState: "Maharashtra",
     linkedAdvanceIds: [],
@@ -287,30 +288,18 @@ function InvoiceModal({ vendor, advancePayments=[], po=null, onClose, onSubmit }
     setSaving(true);
     try {
       let fileUrl = null;
-
-if (uploadedFile) {
-  const path = `invoices/${vendor.id}/${Date.now()}_${uploadedFile.name}`;
-
-  const { error: upErr } = await sb
-    .storage
-    .from("vendor-docs")
-    .upload(path, uploadedFile);
-
-  if (upErr) {
-    throw new Error("Invoice file upload failed: " + upErr.message);
-  }
-
-  const { data: urlData } = sb
-    .storage
-    .from("vendor-docs")
-    .getPublicUrl(path);
-
-  fileUrl = urlData?.publicUrl;
-
-  if (!fileUrl) {
-    throw new Error("Invoice uploaded, but no file URL was generated.");
-  }
-}
+      if (uploadedFile) {
+        const path = `invoices/${vendor.id}/${Date.now()}_${uploadedFile.name}`;
+        const { error: upErr } = await sb.storage.from("vendor-docs").upload(path, uploadedFile);
+        if (upErr) {
+          throw new Error("Invoice file upload failed: " + upErr.message);
+        }
+        const { data: urlData } = sb.storage.from("vendor-docs").getPublicUrl(path);
+        fileUrl = urlData?.publicUrl;
+        if (!fileUrl) {
+          throw new Error("Invoice uploaded, but no file URL was generated.");
+        }
+      }
       const invId = genInvId();
       const payload = {
         id: invId,
@@ -319,7 +308,16 @@ if (uploadedFile) {
         invoice_number: form.invoiceNumber,
         invoice_date: form.invoiceDate,
         po_number: form.poNumber,
-        ship_to: form.shipTo,
+        bill_to: [form.billToAddress, form.billToCity, form.billToState, form.billToPincode].filter(Boolean).join(", "),
+        bill_to_address: form.billToAddress,
+        bill_to_city: form.billToCity,
+        bill_to_state: form.billToState,
+        bill_to_pincode: form.billToPincode,
+        ship_to: [form.shipToAddress, form.shipToCity, form.shipToState, form.shipToPincode].filter(Boolean).join(", "),
+        ship_to_address: form.shipToAddress,
+        ship_to_city: form.shipToCity,
+        ship_to_state: form.shipToState,
+        ship_to_pincode: form.shipToPincode,
         vendor_gstin: form.vendorGstin,
         supply_state: form.supplyState,
         gst_applicable: gstApplicable,
@@ -341,6 +339,27 @@ if (uploadedFile) {
       };
       const { error } = await sb.from("invoices").insert([payload]);
       if (error) throw error;
+
+      if (po?.id) {
+        const currentInvoiced = Number(po.invoiced_amount || 0);
+        const poGrandTotal = Number(po.grand_total || 0);
+        const newInvoiced = currentInvoiced + Number(grandTotal || 0);
+        const newBalance = Math.max(0, poGrandTotal - newInvoiced);
+        const newStatus = newBalance <= 0 ? "fully_invoiced" : "partially_invoiced";
+
+        const { error: poUpdateError } = await sb
+          .from("purchase_orders")
+          .update({
+            invoiced_amount: newInvoiced,
+            balance_amount: newBalance,
+            status: newStatus,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", po.id);
+
+        if (poUpdateError) throw poUpdateError;
+      }
+
       if (form.linkedAdvanceIds.length > 0) {
         await sb.from("advance_payments").update({ status:"adjusted", adjusted_invoice_id: invId }).in("id", form.linkedAdvanceIds);
       }
@@ -400,13 +419,29 @@ if (uploadedFile) {
             {["Immediate","Net 15","Net 30","Net 45","Net 60","Against advance"].map(p => <option key={p}>{p}</option>)}
           </Sel>
         </>}
-        <Inp label="Ship to address" value={form.shipTo} onChange={set("shipTo")} placeholder="Delivery address" full />
       </div>
 
-      {/* GDPL details (read only) */}
-      <div style={{ background:T.blueLight, borderRadius:8, padding:"10px 14px", fontSize:12, color:"#1e40af", marginBottom:14 }}>
-      <strong>Bill to:</strong> {GDPL_NAME} &nbsp;|&nbsp; GSTIN: {GDPL_GSTIN} &nbsp;|&nbsp; State: {GDPL_STATE}
-{form.vendorGstin?.length===15 && <span style={{marginLeft:12,fontWeight:600}}>→ Tax type: <GSTTag gstin={form.vendorGstin}/></span>}
+      {/* Bill To */}
+      <div style={{ border:`1px solid ${T.gray200}`, borderRadius:8, padding:14, marginBottom:14 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:T.gray700, marginBottom:10 }}>Bill to</div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:10 }}>
+          <Inp label="Address" value={form.billToAddress} onChange={set("billToAddress")} placeholder="Billing address" />
+          <Inp label="City" value={form.billToCity} onChange={set("billToCity")} placeholder="City" />
+          <Inp label="State" value={form.billToState} onChange={set("billToState")} placeholder="State" />
+          <Inp label="PIN Code" value={form.billToPincode} onChange={e => setForm(f => ({...f, billToPincode:e.target.value.replace(/\D/g, "").slice(0,6)}))} placeholder="400001" />
+        </div>
+        <div style={{ marginTop:8, fontSize:11, color:T.gray500 }}>{GDPL_NAME} · GSTIN: {GDPL_GSTIN}</div>
+      </div>
+
+      {/* Ship To */}
+      <div style={{ border:`1px solid ${T.gray200}`, borderRadius:8, padding:14, marginBottom:14 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:T.gray700, marginBottom:10 }}>Ship to</div>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:10 }}>
+          <Inp label="Address" value={form.shipToAddress} onChange={set("shipToAddress")} placeholder="Delivery address" />
+          <Inp label="City" value={form.shipToCity} onChange={set("shipToCity")} placeholder="City" />
+          <Inp label="State" value={form.shipToState} onChange={set("shipToState")} placeholder="State" />
+          <Inp label="PIN Code" value={form.shipToPincode} onChange={e => setForm(f => ({...f, shipToPincode:e.target.value.replace(/\D/g, "").slice(0,6)}))} placeholder="400001" />
+        </div>
       </div>
 
       {/* Line items */}
