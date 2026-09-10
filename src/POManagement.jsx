@@ -151,6 +151,12 @@ export default function POManagement({
 
   const [selectedPO, setSelectedPO] = useState(null);
 
+  // PO document upload state
+  const [showUploadPO, setShowUploadPO] = useState(false);
+  const [uploadingPO, setUploadingPO] = useState(false);
+  const [uploadPOFile, setUploadPOFile] = useState(null);
+  const [uploadPOId, setUploadPOId] = useState("");
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [vendorFilter, setVendorFilter] = useState("all");
@@ -608,6 +614,111 @@ export default function POManagement({
         "Could not cancel PO: " +
           error.message
       );
+    }
+  };
+
+  const handleUploadPO = async () => {
+    if (!supabase) {
+      alert("Supabase client is not available.");
+      return;
+    }
+
+    if (!uploadPOId) {
+      alert("Please select the PO this document belongs to.");
+      return;
+    }
+
+    if (!uploadPOFile) {
+      alert("Please select a PO PDF or image.");
+      return;
+    }
+
+    const selectedUploadPO = purchaseOrders.find(
+      (po) => String(po.id) === String(uploadPOId)
+    );
+
+    if (!selectedUploadPO) {
+      alert("The selected purchase order could not be found.");
+      return;
+    }
+
+    setUploadingPO(true);
+
+    let uploadedPath = null;
+
+    try {
+      const safeName = uploadPOFile.name.replace(
+        /[^a-zA-Z0-9._-]/g,
+        "_"
+      );
+
+      uploadedPath =
+        `purchase-orders/${selectedUploadPO.vendor_id || "unknown"}/` +
+        `${selectedUploadPO.po_number}_${Date.now()}_${safeName}`;
+
+      const { error: uploadError } = await supabase
+        .storage
+        .from("vendor-docs")
+        .upload(uploadedPath, uploadPOFile);
+
+      if (uploadError) {
+        throw new Error(
+          "PO file upload failed: " + uploadError.message
+        );
+      }
+
+      const { data: urlData } = supabase
+        .storage
+        .from("vendor-docs")
+        .getPublicUrl(uploadedPath);
+
+      const fileUrl = urlData?.publicUrl;
+
+      if (!fileUrl) {
+        throw new Error(
+          "PO uploaded, but no file URL was generated."
+        );
+      }
+
+      const { error: updateError } = await supabase
+        .from("purchase_orders")
+        .update({
+          file_url: fileUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selectedUploadPO.id);
+
+      if (updateError) {
+        // Avoid leaving an orphaned storage file when the database update fails.
+        await supabase.storage
+          .from("vendor-docs")
+          .remove([uploadedPath]);
+
+        throw updateError;
+      }
+
+      alert(
+        `PO document attached successfully to ${selectedUploadPO.po_number}.`
+      );
+
+      setUploadPOFile(null);
+      setUploadPOId("");
+      setShowUploadPO(false);
+
+      await loadPOs();
+
+      // Keep the currently viewed PO in sync if it is the one updated.
+      if (selectedPO?.id === selectedUploadPO.id) {
+        setSelectedPO({
+          ...selectedUploadPO,
+          file_url: fileUrl,
+        });
+      }
+    } catch (error) {
+      console.error("Error uploading PO:", error);
+      alert("Could not upload PO: " + error.message);
+    } finally {
+      setUploadingPO(false);
     }
   };
 
@@ -1155,6 +1266,25 @@ export default function POManagement({
                 {po.ship_to || "-"}
               </strong>
             </div>
+
+            <div className="po-detail-full">
+              <span>PO Document</span>
+              <strong>
+                {po.file_url ? (
+                  <a
+                    className="po-file-link"
+                    href={po.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="View or download PO document"
+                  >
+                    👁 View / Download PO
+                  </a>
+                ) : (
+                  "Not attached"
+                )}
+              </strong>
+            </div>
           </div>
 
           <div className="po-items-heading">
@@ -1695,6 +1825,17 @@ export default function POManagement({
           margin-bottom: 0;
         }
 
+        .po-file-link {
+          color: #2563eb;
+          text-decoration: none;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+
+        .po-file-link:hover {
+          text-decoration: underline;
+        }
+
         @media (max-width: 900px) {
           .po-summary {
             grid-template-columns: repeat(2, 1fr);
@@ -1741,12 +1882,25 @@ export default function POManagement({
 
         <div className="po-header-actions">
           {isAdmin && (
-            <button
-              className="po-primary-button"
-              onClick={openNewPO}
-            >
-              + New Purchase Order
-            </button>
+            <>
+              <button
+                className="po-primary-button"
+                onClick={openNewPO}
+              >
+                + New Purchase Order
+              </button>
+
+              <button
+                className="po-secondary-button"
+                onClick={() => {
+                  setUploadPOFile(null);
+                  setUploadPOId("");
+                  setShowUploadPO(true);
+                }}
+              >
+                📎 Upload PO
+              </button>
+            </>
           )}
 
           <button
@@ -1890,6 +2044,7 @@ export default function POManagement({
                 <th>PO Value</th>
                 <th>Invoiced</th>
                 <th>Balance</th>
+                <th>Attachment</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -1952,6 +2107,22 @@ export default function POManagement({
                     ₹{" "}
                     {money(
                       po.balance_amount
+                    )}
+                  </td>
+
+                  <td>
+                    {po.file_url ? (
+                      <a
+                        className="po-file-link"
+                        href={po.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="View or download PO document"
+                      >
+                        👁 View
+                      </a>
+                    ) : (
+                      <span className="po-muted">None</span>
                     )}
                   </td>
 
@@ -2025,6 +2196,152 @@ export default function POManagement({
 
       {selectedPO &&
         renderDetails(selectedPO)}
+
+      {showUploadPO && (
+        <div className="po-overlay">
+          <div
+            className="po-modal"
+            style={{ maxWidth: 600 }}
+          >
+            <div className="po-modal-header">
+              <div>
+                <h2>Upload Purchase Order</h2>
+                <div className="po-muted">
+                  Attach the PO document to an existing purchase order.
+                </div>
+              </div>
+
+              <button
+                className="po-icon-button"
+                onClick={() => {
+                  if (!uploadingPO) {
+                    setShowUploadPO(false);
+                    setUploadPOFile(null);
+                    setUploadPOId("");
+                  }
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ padding: 20 }}>
+              <label
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  marginBottom: 16,
+                }}
+              >
+                Purchase Order
+                <select
+                  value={uploadPOId}
+                  onChange={(e) =>
+                    setUploadPOId(e.target.value)
+                  }
+                  disabled={uploadingPO}
+                >
+                  <option value="">
+                    Select Purchase Order
+                  </option>
+
+                  {purchaseOrders
+                    .filter((po) => isAdmin || String(po.vendor_id) === String(vendorId))
+                    .map((po) => (
+                      <option
+                        key={po.id}
+                        value={po.id}
+                      >
+                        {po.po_number} — {getVendorName(vendors, po.vendor_id)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                PO Document
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) =>
+                    setUploadPOFile(
+                      e.target.files?.[0] || null
+                    )
+                  }
+                  disabled={uploadingPO}
+                />
+              </label>
+
+              {uploadPOFile && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 10,
+                    background: "#f9fafb",
+                    borderRadius: 7,
+                    fontSize: 12,
+                    color: "#374151",
+                  }}
+                >
+                  Selected file:{" "}
+                  <strong>{uploadPOFile.name}</strong>
+                </div>
+              )}
+
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 11,
+                  color: "#6b7280",
+                }}
+              >
+                Supported formats: PDF, JPG, JPEG and PNG.
+                The document will be stored securely in the
+                existing vendor-docs storage bucket.
+              </div>
+            </div>
+
+            <div className="po-modal-actions">
+              <button
+                className="po-secondary-button"
+                onClick={() => {
+                  setShowUploadPO(false);
+                  setUploadPOFile(null);
+                  setUploadPOId("");
+                }}
+                disabled={uploadingPO}
+              >
+                Cancel
+              </button>
+
+              <button
+                className="po-primary-button"
+                onClick={handleUploadPO}
+                disabled={
+                  uploadingPO ||
+                  !uploadPOId ||
+                  !uploadPOFile
+                }
+              >
+                {uploadingPO
+                  ? "Uploading..."
+                  : "Upload PO"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
