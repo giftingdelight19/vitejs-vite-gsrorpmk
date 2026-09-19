@@ -250,58 +250,77 @@ function InquiryForm({
   async function save(e) {
     e.preventDefault();
     setMessage("");
+    const clean = (value) => String(value ?? "").trim();
     if (
-      !form.contact_name.trim() ||
-      !form.contact_phone.trim() ||
-      !form.requirement.trim()
+      !clean(form.contact_name) ||
+      !clean(form.contact_phone) ||
+      !clean(form.requirement)
     ) {
       setMessage("Please enter your name, phone number and requirement.");
       return;
     }
     setSaving(true);
-    const products = form.products
-      .filter((p) => p.product_name.trim())
-      .map((p) => ({
-        ...p,
-        quantity: p.quantity === "" ? null : Number(p.quantity),
-        budget_per_unit:
-          p.budget_per_unit === "" ? null : Number(p.budget_per_unit),
-        total_budget: p.total_budget === "" ? null : Number(p.total_budget),
-      }));
-    const payload = {
-      customer_name: form.customer_name.trim() || null,
-      contact_name: form.contact_name.trim(),
-      contact_phone: form.contact_phone.trim(),
-      contact_email: form.contact_email.trim() || null,
-      requirement: form.requirement.trim(),
-      expected_delivery_date: form.expected_delivery_date || null,
-      delivery_location: form.delivery_location.trim() || null,
-      source: publicMode ? "Website" : form.source,
-      status: publicMode ? "New" : form.status,
-      notes: form.notes.trim() || null,
-      products: products.map((p) => ({ ...p, line_total: lineTotal(p) })),
-      total_amount: grandTotal,
-      original_inquiry: rawInquiry.trim() || null,
-      updated_at: new Date().toISOString(),
-    };
-    const result = form.id
-      ? await supabase.from("inquiries").update(payload).eq("id", form.id)
-      : await supabase
-          .from("inquiries")
-          .insert([
-            { ...payload, inquiry_date: new Date().toISOString().slice(0, 10) },
+    try {
+      const products = (Array.isArray(form.products) ? form.products : [])
+        .filter((p) => clean(p?.product_name))
+        .map((p) => ({
+          ...p,
+          product_name: clean(p.product_name),
+          description: clean(p.description) || null,
+          unit: clean(p.unit) || null,
+          delivery_location: clean(p.delivery_location) || null,
+          quantity:
+            p.quantity === "" || p.quantity == null ? null : Number(p.quantity),
+          budget_per_unit:
+            p.budget_per_unit === "" || p.budget_per_unit == null
+              ? null
+              : Number(p.budget_per_unit),
+          total_budget:
+            p.total_budget === "" || p.total_budget == null
+              ? null
+              : Number(p.total_budget),
+        }));
+      const payload = {
+        customer_name: clean(form.customer_name) || null,
+        contact_name: clean(form.contact_name),
+        contact_phone: clean(form.contact_phone),
+        contact_email: clean(form.contact_email) || null,
+        requirement: clean(form.requirement),
+        expected_delivery_date: form.expected_delivery_date || null,
+        delivery_location: clean(form.delivery_location) || null,
+        source: publicMode ? "Website" : form.source || "Other",
+        status: publicMode ? "New" : form.status || "New",
+        notes: clean(form.notes) || null,
+        products: products.map((p) => ({ ...p, line_total: lineTotal(p) })),
+        total_amount: grandTotal,
+        original_inquiry: clean(rawInquiry) || null,
+        updated_at: new Date().toISOString(),
+      };
+      const result = form.id
+        ? await supabase.from("inquiries").update(payload).eq("id", form.id)
+        : await supabase.from("inquiries").insert([
+            {
+              ...payload,
+              inquiry_date: new Date().toISOString().slice(0, 10),
+            },
           ]);
-    setSaving(false);
-    if (result.error) {
-      setMessage(`Unable to save inquiry: ${result.error.message}`);
-      return;
-    }
-    if (publicMode) {
-      setForm(blank());
+      if (result.error) {
+        setMessage(`Unable to save inquiry: ${result.error.message}`);
+        return;
+      }
+      if (publicMode) {
+        setForm(blank());
+        setMessage(
+          "Thank you. Your inquiry has been submitted successfully. Our team will contact you shortly.",
+        );
+      } else onSaved?.();
+    } catch (error) {
       setMessage(
-        "Thank you. Your inquiry has been submitted successfully. Our team will contact you shortly.",
+        `Unable to save inquiry: ${error?.message || "Unknown error"}`,
       );
-    } else onSaved?.();
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
