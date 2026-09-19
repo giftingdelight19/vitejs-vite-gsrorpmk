@@ -175,7 +175,7 @@ async function requestHandler(request, env) {
 
     try {
       body = await request.json();
-    } catch (error) {
+    } catch {
       return new Response(
         JSON.stringify({
           error: "Invalid JSON request body.",
@@ -228,17 +228,17 @@ async function requestHandler(request, env) {
     }
 
     const ai = new GoogleGenAI({
-      apiKey: apiKey,
+      apiKey,
     });
 
-    const parts = [];
-
-    parts.push({
-      text:
-        instructions +
-        "\n\nCustomer inquiry:\n" +
-        (text.trim() || "(The inquiry was supplied as an image.)"),
-    });
+    const parts = [
+      {
+        text:
+          instructions +
+          "\n\nCustomer inquiry:\n" +
+          (text.trim() || "(The inquiry was supplied as an image.)"),
+      },
+    ];
 
     if (imageBase64) {
       if (!imageMimeType) {
@@ -263,41 +263,87 @@ async function requestHandler(request, env) {
       });
     }
 
-    const models = ["gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"];
+    const models = [
+      "gemini-3.8-flash",
+      "gemini-3.7-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash",
+      "gemini-2.5-flash",
+    ];
+
     let response;
     let lastModelError;
 
-    for (const model of models) {
-      try {
-        response = await ai.models.generateContent({
-          model,
-          contents: [
-            {
-              role: "user",
-              parts: parts,
+    modelLoop: for (const model of models) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents: [
+              {
+                role: "user",
+                parts,
+              },
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: schema,
+              temperature: 0,
             },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: schema,
-            temperature: 0,
-          },
-        });
-        break;
-      } catch (modelError) {
-        lastModelError = modelError;
-        const details = String(modelError?.message || modelError);
-        const retryable =
-          /503|UNAVAILABLE|high demand|429|RESOURCE_EXHAUSTED/i.test(details);
-        console.warn(`Gemini model ${model} failed:`, details);
-        if (!retryable) throw modelError;
+          });
+
+          break modelLoop;
+        } catch (modelError) {
+          lastModelError = modelError;
+
+          const details = String(
+            modelError?.message || modelError,
+          );
+
+          const modelUnavailable =
+            /404|NOT_FOUND|not found|model.+not.+available/i.test(
+              details,
+            );
+
+          const temporarilyUnavailable =
+            /503|UNAVAILABLE|high demand|429|RESOURCE_EXHAUSTED|rate limit/i.test(
+              details,
+            );
+
+          console.warn(
+            `Gemini model ${model}, attempt ${attempt + 1} failed:`,
+            details,
+          );
+
+          if (modelUnavailable) {
+            break;
+          }
+
+          if (temporarilyUnavailable) {
+            if (attempt === 0) {
+              await new Promise((resolve) =>
+                setTimeout(resolve, 1200),
+              );
+
+              continue;
+            }
+
+            break;
+          }
+
+          throw modelError;
+        }
       }
     }
 
     if (!response) {
-      throw (
-        lastModelError ||
-        new Error("All Gemini models are temporarily unavailable.")
+      console.error(
+        "All Gemini fallback models failed:",
+        lastModelError,
+      );
+
+      throw new Error(
+        "AI extraction is temporarily unavailable after trying all fallback models. Please try again shortly.",
       );
     }
 
@@ -311,8 +357,11 @@ async function requestHandler(request, env) {
 
     try {
       extracted = JSON.parse(outputText);
-    } catch (error) {
-      console.error("Gemini returned invalid JSON:", outputText);
+    } catch {
+      console.error(
+        "Gemini returned invalid JSON:",
+        outputText,
+      );
 
       throw new Error("Gemini returned invalid JSON.");
     }
@@ -342,11 +391,16 @@ async function requestHandler(request, env) {
       },
     );
   } catch (error) {
-    console.error("Gemini inquiry extraction error:", error);
+    console.error(
+      "Gemini inquiry extraction error:",
+      error,
+    );
 
     return new Response(
       JSON.stringify({
-        error: error?.message || "Unable to extract inquiry.",
+        error:
+          error?.message ||
+          "Unable to extract inquiry.",
       }),
       {
         status: 500,
@@ -358,7 +412,6 @@ async function requestHandler(request, env) {
   }
 }
 
-// Cloudflare Worker entry point.
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -367,6 +420,13 @@ export default {
       return requestHandler(request, env);
     }
 
-    return Response.json({ error: "Not found" }, { status: 404 });
+    return Response.json(
+      {
+        error: "Not found",
+      },
+      {
+        status: 404,
+      },
+    );
   },
 };
