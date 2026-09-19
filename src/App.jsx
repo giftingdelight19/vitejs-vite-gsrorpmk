@@ -1047,9 +1047,19 @@ function LoginPage({ onLogin, onRegisterClick, onInquiryClick }) {
     setError(""); setLoading(true);
     try {
       if (mode==="admin") {
-        const { data, error:err } = await sb.from("admin_users").select("*").eq("email",email).eq("password",password).single();
-        if (err||!data) { setError("Invalid admin credentials."); setLoading(false); return; }
-        onLogin({ role:"admin", name:data.name });
+        const { data:authData, error:authError } = await sb.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        });
+        if (authError || !authData?.user) {
+          setError("Invalid admin credentials."); setLoading(false); return;
+        }
+        const { data:isAdmin, error:roleError } = await sb.rpc("is_portal_admin");
+        if (roleError || !isAdmin) {
+          await sb.auth.signOut();
+          setError("This account does not have administrator access."); setLoading(false); return;
+        }
+        onLogin({ role:"admin", name:authData.user.email, user_id:authData.user.id });
       } else {
         const { data, error:err } = await sb.from("vendors").select("*").eq("email",email).eq("password",password).single();
         if (err||!data) { setError("Email or password is incorrect."); setLoading(false); return; }
@@ -2015,7 +2025,13 @@ export default function App() {
   const [session, setSession] = useState(savedSession);
 
   const login  = sess => { localStorage.setItem("gdpl_portal_session", JSON.stringify(sess)); setSession(sess); setView(sess.role); window.location.hash=""; };
-  const logout = ()   => { localStorage.removeItem("gdpl_portal_session"); setSession(null); setView("login"); window.location.hash=""; };
+  const logout = async () => {
+    if (session?.role === "admin") await sb.auth.signOut();
+    localStorage.removeItem("gdpl_portal_session");
+    setSession(null);
+    setView("login");
+    window.location.hash="";
+  };
   const showInquiry = () => { window.location.hash="inquiry"; setView("inquiry"); };
   const showLogin = () => { window.location.hash=""; setView(session?.role || "login"); };
 

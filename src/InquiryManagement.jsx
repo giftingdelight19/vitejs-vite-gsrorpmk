@@ -743,6 +743,144 @@ export function PublicInquiryPage({ supabase, onBackToLogin }) {
   );
 }
 
+function InquiryActivityTimeline({ supabase, inquiry, onChanged }) {
+  const [activities, setActivities] = useState([]);
+  const [activityType, setActivityType] = useState("Follow-up call");
+  const [remarks, setRemarks] = useState("");
+  const [followUpDate, setFollowUpDate] = useState("");
+  const [newStatus, setNewStatus] = useState(inquiry.status || "New");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadActivities() {
+    const { data, error: loadError } = await supabase
+      .from("inquiry_activities")
+      .select("*")
+      .eq("inquiry_id", inquiry.id)
+      .order("activity_date", { ascending: false });
+    if (loadError) setError(loadError.message);
+    else setActivities(data || []);
+  }
+
+  useEffect(() => {
+    loadActivities();
+  }, [inquiry.id]);
+
+  async function addActivity(event) {
+    event.preventDefault();
+    if (!remarks.trim()) {
+      setError("Please enter remarks for this activity.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const statusChanged = newStatus !== (inquiry.status || "New");
+      const { error: insertError } = await supabase
+        .from("inquiry_activities")
+        .insert([{
+          inquiry_id: inquiry.id,
+          activity_type: activityType,
+          remarks: remarks.trim(),
+          previous_status: inquiry.status || "New",
+          new_status: statusChanged ? newStatus : null,
+          follow_up_date: followUpDate || null,
+        }]);
+      if (insertError) throw insertError;
+      if (statusChanged) {
+        const { error: statusError } = await supabase
+          .from("inquiries")
+          .update({ status: newStatus, updated_at: new Date().toISOString() })
+          .eq("id", inquiry.id);
+        if (statusError) throw statusError;
+      }
+      setRemarks("");
+      setFollowUpDate("");
+      await loadActivities();
+      onChanged?.();
+    } catch (saveError) {
+      setError(saveError?.message || "Unable to save activity.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function editActivity(item) {
+    const revised = window.prompt("Edit activity remarks:", item.remarks || "");
+    if (revised == null || !revised.trim() || revised.trim() === item.remarks) return;
+    setError("");
+    const { error: updateError } = await supabase
+      .from("inquiry_activities")
+      .update({ remarks: revised.trim(), edited_at: new Date().toISOString() })
+      .eq("id", item.id);
+    if (updateError) setError(updateError.message);
+    else loadActivities();
+  }
+
+  async function deleteActivity(item) {
+    if (!window.confirm("Delete this activity entry? This cannot be undone.")) return;
+    setError("");
+    const { error: deleteError } = await supabase
+      .from("inquiry_activities")
+      .delete()
+      .eq("id", item.id);
+    if (deleteError) setError(deleteError.message);
+    else loadActivities();
+  }
+
+  return (
+    <div style={{ marginTop: 18, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20 }}>
+      <h2 style={{ fontSize: 17, margin: "0 0 4px", color: "#0f1f3d" }}>Activity history & follow-up</h2>
+      <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 12 }}>
+        Add a separate dated entry for every call, quotation, negotiation or outcome. Older entries are never overwritten.
+      </p>
+      <form onSubmit={addActivity} style={{ display: "grid", gridTemplateColumns: "180px 160px 170px 1fr auto", gap: 10, alignItems: "end" }}>
+        <Field label="Activity">
+          <select style={inp} value={activityType} onChange={(e) => setActivityType(e.target.value)}>
+            {["Follow-up call", "Email", "WhatsApp", "Meeting", "Quotation sent", "Negotiation", "Customer response", "Internal note", "Outcome"].map((value) => <option key={value}>{value}</option>)}
+          </select>
+        </Field>
+        <Field label="Status after activity">
+          <select style={inp} value={newStatus} onChange={(e) => setNewStatus(e.target.value)}>
+            {STATUSES.map((value) => <option key={value}>{value}</option>)}
+          </select>
+        </Field>
+        <Field label="Next follow-up date">
+          <input type="date" style={inp} value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)} />
+        </Field>
+        <Field label="Remarks" required>
+          <input style={inp} value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="What happened, customer response, reason won/lost…" />
+        </Field>
+        <button disabled={saving} style={{ ...btn, background: "#1e56d9", color: "#fff", opacity: saving ? 0.6 : 1 }}>
+          {saving ? "Saving…" : "Add activity"}
+        </button>
+      </form>
+      {error && <div style={{ marginTop: 10, color: "#b91c1c", fontSize: 12 }}>{error}</div>}
+      <div style={{ marginTop: 18, display: "grid", gap: 10 }}>
+        {activities.length === 0 ? (
+          <div style={{ color: "#94a3b8", fontSize: 12 }}>No activity recorded yet.</div>
+        ) : activities.map((item) => (
+          <div key={item.id} style={{ borderLeft: "3px solid #1e56d9", padding: "8px 12px", background: "#f8fafc", borderRadius: "0 8px 8px 0" }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <strong style={{ color: "#0f1f3d", fontSize: 13 }}>{item.activity_type}</strong>
+              <span style={{ color: "#64748b", fontSize: 11 }}>{new Date(item.activity_date).toLocaleString("en-IN")}</span>
+              {item.new_status && <span style={{ background: "#e8effd", color: "#1e56d9", padding: "2px 7px", borderRadius: 10, fontSize: 11 }}>{item.previous_status} → {item.new_status}</span>}
+            </div>
+            <div style={{ marginTop: 5, fontSize: 13, color: "#334155", whiteSpace: "pre-wrap" }}>{item.remarks}</div>
+            <div style={{ marginTop: 5, fontSize: 11, color: "#64748b" }}>
+              {item.created_by_email || "Administrator"}{item.follow_up_date ? ` • Follow-up: ${item.follow_up_date}` : ""}{item.edited_at ? " • Edited" : ""}
+            </div>
+            <div style={{ marginTop: 7, display: "flex", gap: 6 }}>
+              <button type="button" onClick={() => editActivity(item)} style={{ ...btn, padding: "4px 8px", fontSize: 11, background: "#e8effd", color: "#1e56d9" }}>Edit remarks</button>
+              <button type="button" onClick={() => deleteActivity(item)} style={{ ...btn, padding: "4px 8px", fontSize: 11, background: "#fee2e2", color: "#b91c1c" }}>Delete entry</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function InquiryManagement({ supabase }) {
   const [rows, setRows] = useState([]),
     [loading, setLoading] = useState(true),
@@ -771,15 +909,43 @@ export default function InquiryManagement({ supabase }) {
     [rows, search],
   );
   async function updateStatus(id, status) {
+    const currentRow = rows.find((row) => row.id === id);
+    const previousStatus = currentRow?.status || "New";
     const { error: e } = await supabase
       .from("inquiries")
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id);
     if (e) setError(e.message);
-    else
+    else {
+      await supabase.from("inquiry_activities").insert([{
+        inquiry_id: id,
+        activity_type: "Status change",
+        remarks: `Status changed from ${previousStatus} to ${status}.`,
+        previous_status: previousStatus,
+        new_status: status,
+      }]);
       setRows((current) =>
         current.map((r) => (r.id === id ? { ...r, status } : r)),
       );
+    }
+  }
+  async function deleteInquiry(inquiry) {
+    const confirmation = window.prompt(
+      `This permanently deletes the inquiry and its activity history. Type DELETE to remove ${inquiry.customer_name || inquiry.contact_name || "this inquiry"}.`,
+    );
+    if (confirmation !== "DELETE") return;
+    setError("");
+    const { data: adminUser } = await supabase.auth.getUser();
+    if (!adminUser?.user) {
+      setError("Your administrator session has expired. Please log out and sign in again.");
+      return;
+    }
+    const { error: deleteError } = await supabase
+      .from("inquiries")
+      .delete()
+      .eq("id", inquiry.id);
+    if (deleteError) setError(`Unable to delete inquiry: ${deleteError.message}`);
+    else setRows((current) => current.filter((row) => row.id !== inquiry.id));
   }
   function exportExcel() {
     const report = [];
@@ -855,6 +1021,16 @@ export default function InquiryManagement({ supabase }) {
               load();
             }}
           />
+          {editing.id && (
+            <InquiryActivityTimeline
+              supabase={supabase}
+              inquiry={editing}
+              onChanged={async () => {
+                const { data } = await supabase.from("inquiries").select("*").eq("id", editing.id).single();
+                if (data) setEditing(data);
+              }}
+            />
+          )}
         </div>
       </div>
     );
@@ -1022,17 +1198,20 @@ export default function InquiryManagement({ supabase }) {
                         </select>
                       </td>
                       <td style={{ padding: 10 }}>
-                        <button
-                          onClick={() => setEditing(r)}
-                          style={{
-                            ...btn,
-                            padding: "6px 10px",
-                            background: "#f1f5f9",
-                            color: "#334155",
-                          }}
-                        >
-                          View / Edit
-                        </button>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <button
+                            onClick={() => setEditing(r)}
+                            style={{ ...btn, padding: "6px 10px", background: "#f1f5f9", color: "#334155" }}
+                          >
+                            View / Edit
+                          </button>
+                          <button
+                            onClick={() => deleteInquiry(r)}
+                            style={{ ...btn, padding: "6px 10px", background: "#fee2e2", color: "#b91c1c" }}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
