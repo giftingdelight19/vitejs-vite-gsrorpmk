@@ -228,8 +228,11 @@ async function requestHandler(request, env) {
     }
 
     const ai = new GoogleGenAI({
-      apiKey,
-    });
+        apiKey,
+        httpOptions: {
+          timeout: 12000,
+        },
+      });
 
     const parts = [
       {

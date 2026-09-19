@@ -131,7 +131,7 @@ function InquiryForm({
         body.imageMimeType = imageFile.type;
       }
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 55000);
+      const timeoutId = window.setTimeout(() => controller.abort(), 95000);
       let response;
       try {
         response = await fetch("/api/extract-inquiry", {
