@@ -267,18 +267,16 @@ async function requestHandler(request, env) {
     }
 
     const models = [
-      "gemini-3.8-flash",
-      "gemini-3.7-flash",
-      "gemini-3.6-flash",
-      "gemini-3.5-flash",
-      "gemini-2.5-flash",
-    ];
+        "gemini-2.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+      ];
 
     let response;
     let lastModelError;
 
     modelLoop: for (const model of models) {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+        for (let attempt = 0; attempt < 1; attempt += 1) {
         try {
           response = await ai.models.generateContent({
             model,
@@ -323,14 +321,6 @@ async function requestHandler(request, env) {
           }
 
           if (temporarilyUnavailable) {
-            if (attempt === 0) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, 1200),
-              );
-
-              continue;
-            }
-
             break;
           }
 
