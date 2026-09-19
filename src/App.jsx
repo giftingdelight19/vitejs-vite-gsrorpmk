@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import POManagement from "./POManagement";
+import PODTracker from "./PODTracker";
 
 import { createClient } from "@supabase/supabase-js";
+import InquiryManagement, { PublicInquiryPage } from "./InquiryManagement";
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SUPA_URL = "https://xzcvevmjmymsdjbvtzbs.supabase.co";
@@ -216,17 +218,103 @@ function InvoiceModal({ vendor, advancePayments=[], po=null, onClose, onSubmit }
   const [docType, setDocType]         = useState("Tax Invoice");
   const [gstApplicable, setGstApp]    = useState(true);
   const [noGstReason, setNoGstReason] = useState("");
+  const getPOItems = (value) => {
+    if (Array.isArray(value)) return value;
+
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    return [];
+  };
+
+  const blankInvoiceItem = () => ({
+    description: "",
+    hsn: "",
+    unit: "Nos",
+    qty: "",
+    rate: "",
+    gstPct: "18",
+    taxableAmt: 0,
+    gstAmt: 0,
+    lineTotal: 0,
+  });
+
+  const buildInvoiceItems = (poData) => {
+    const poItems = getPOItems(poData?.items);
+
+    if (!poItems.length) {
+      return [blankInvoiceItem()];
+    }
+
+    return poItems.map((item) => ({
+      description: item.description || "",
+      hsn: item.hsn || "",
+      unit: item.unit || "Nos",
+      qty: item.qty ?? "",
+      rate: item.rate ?? "",
+      gstPct: item.gstPct ?? item.gst_pct ?? "18",
+      taxableAmt: Number(item.taxable ?? item.taxableAmt ?? 0),
+      gstAmt: Number(item.gst ?? item.gstAmt ?? 0),
+      lineTotal: Number(item.total ?? item.lineTotal ?? 0),
+    }));
+  };
+
   const [form, setForm] = useState({
-    invoiceNumber: "", invoiceDate: today(), poNumber: po?.po_number || "",
-    billToAddress: "", billToCity: "", billToState: "Maharashtra", billToPincode: "",
-    shipToAddress: po?.ship_to_address || "", shipToCity: po?.ship_to_city || "",
-    shipToState: po?.ship_to_state || "Maharashtra", shipToPincode: po?.ship_to_pincode || "",
+    invoiceNumber: "",
+    invoiceDate: today(),
+    poNumber: po?.po_number || "",
+
+    billToAddress: po?.bill_to_address || "",
+    billToCity: po?.bill_to_city || "",
+    billToState: po?.bill_to_state || "Maharashtra",
+    billToPincode: po?.bill_to_pincode || "",
+
+    shipToAddress: po?.ship_to_address || "",
+    shipToCity: po?.ship_to_city || "",
+    shipToState: po?.ship_to_state || "Maharashtra",
+    shipToPincode: po?.ship_to_pincode || "",
     shipTo: po?.ship_to || "",
-    vendorGstin: vendor?.gstin || "", paymentTerms: "Net 30", notes: "",
-    supplyState: "Maharashtra",
+
+    vendorGstin: vendor?.gstin || "",
+    paymentTerms: po?.payment_terms || "Net 30",
+    notes: "",
+    supplyState: po?.ship_to_state || "Maharashtra",
     linkedAdvanceIds: [],
   });
-  const [items, setItems] = useState([{ description:"", hsn:"", unit:"Nos", qty:"", rate:"", gstPct:"18", taxableAmt:0, gstAmt:0, lineTotal:0 }]);
+
+  const [items, setItems] = useState(() => buildInvoiceItems(po));
+
+  useEffect(() => {
+    if (!po) return;
+
+    setForm((current) => ({
+      ...current,
+
+      poNumber: po.po_number || "",
+
+      billToAddress: po.bill_to_address || "",
+      billToCity: po.bill_to_city || "",
+      billToState: po.bill_to_state || "Maharashtra",
+      billToPincode: po.bill_to_pincode || "",
+
+      shipToAddress: po.ship_to_address || "",
+      shipToCity: po.ship_to_city || "",
+      shipToState: po.ship_to_state || "Maharashtra",
+      shipToPincode: po.ship_to_pincode || "",
+      shipTo: po.ship_to || "",
+
+      paymentTerms: po.payment_terms || "Net 30",
+      supplyState: po.ship_to_state || "Maharashtra",
+    }));
+
+    setItems(buildInvoiceItems(po));
+  }, [po?.id]);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -947,7 +1035,7 @@ function RegistrationPage({ onSuccess, onLoginClick }) {
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-function LoginPage({ onLogin, onRegisterClick }) {
+function LoginPage({ onLogin, onRegisterClick, onInquiryClick }) {
   const [email, setEmail]     = useState("");
   const [password, setPass]   = useState("");
   const [mode, setMode]       = useState("vendor");
@@ -1022,6 +1110,11 @@ function LoginPage({ onLogin, onRegisterClick }) {
               <Btn variant="secondary" onClick={onRegisterClick} style={{ width:"100%", justifyContent:"center" }}>Register as a vendor →</Btn>
             </div>
           )}
+          <div style={{ marginTop:12 }}>
+            <Btn variant="primary" onClick={onInquiryClick} style={{ width:"100%", justifyContent:"center", background:T.green, borderColor:T.green }}>
+              Submit a product inquiry — no login required
+            </Btn>
+          </div>
          <div style={{ marginTop:24, padding:14, background:T.blueLight, borderRadius:10, fontSize:12 }}>
             <div style={{ fontWeight:600, color:"#1e40af", marginBottom:4 }}>Need help?</div>
             <div style={{ color:"#1e40af" }}>Contact: support@giftingdelight.co.in</div>
@@ -1073,6 +1166,7 @@ function VendorPortal({ vendor, onLogout }) {
     { id:"dashboard",       label:"Dashboard",        icon:"⊞" },
     { id:"invoices",        label:"My invoices",      icon:"📄" },
     { id:"purchase-orders", label:"Purchase Orders",  icon:"📋" },
+    { id:"pod-tracker",     label:"POD Tracker",      icon:"📦" },
     { id:"advances",        label:"Advance payments", icon:"💰" },
     { id:"payments",        label:"Payment history",  icon:"💳" },
     { id:"profile",         label:"My profile",       icon:"👤" },
@@ -1544,13 +1638,15 @@ function AdminPanel({ onLogout }) {
     })), `payments-${today()}.xlsx`, "Payments");
 
     const navItems = [
-      { id:"dashboard", label:"Dashboard",    icon:"⊞" },
-      { id:"vendors",   label:"Vendors",      icon:"🏢", badge:stats.pendingVendors },
-      { id:"purchase-orders", label:"Purchase Orders",  icon:"📋" },
-      { id:"invoices",  label:"Invoices",     icon:"📄", badge:stats.pendingInvoices },
-      { id:"advances",  label:"Advances",     icon:"💰", badge:stats.pendingAdv },
-      { id:"payments",  label:"Payments",     icon:"💳" },
-      { id:"reports",   label:"Reports & Excel", icon:"📊" },
+      { id:"dashboard", label:"Dashboard", icon:"⊞" },
+      { id:"vendors", label:"Vendors", icon:"🏢", badge:stats.pendingVendors },
+      { id:"inquiries", label:"Leads & Inquiries", icon:"📞" },
+      { id:"purchase-orders", label:"Purchase Orders", icon:"📋" },
+      { id:"pod-tracker", label:"POD Tracker", icon:"📦" },
+      { id:"invoices", label:"Invoices", icon:"📄", badge:stats.pendingInvoices },
+      { id:"advances", label:"Advances", icon:"💰", badge:stats.pendingAdv },
+      { id:"payments", label:"Payments", icon:"💳" },
+      { id:"reports", label:"Reports & Excel", icon:"📊" },
     ];
 
     return (
@@ -1656,6 +1752,15 @@ function AdminPanel({ onLogout }) {
   />
 )}
 
+{/* POD Tracker */}
+{!loading && page==="pod-tracker" && (
+  <PODTracker
+    supabase={sb}
+    mode="admin"
+    vendors={vendors}
+  />
+)}
+
           {/* Invoices */}
           {!loading && page==="invoices" && (
             <div>
@@ -1718,6 +1823,12 @@ function AdminPanel({ onLogout }) {
               </Card>
             </div>
           )}
+
+{/* Leads & Inquiries */}
+{!loading && page==="inquiries" && (
+  <InquiryManagement supabase={sb} />
+)}
+
           {/* Reports & Excel */}
           {!loading && page==="reports" && (
             <div>
@@ -1895,17 +2006,31 @@ function AdminPanel({ onLogout }) {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [view, setView]       = useState("login");
-  const [session, setSession] = useState(null);
+  const savedSession = (() => {
+    try { return JSON.parse(localStorage.getItem("gdpl_portal_session") || "null"); }
+    catch { return null; }
+  })();
+  const initialPublicView = window.location.hash === "#inquiry";
+  const [view, setView]       = useState(initialPublicView ? "inquiry" : (savedSession?.role || "login"));
+  const [session, setSession] = useState(savedSession);
 
-  const login  = sess => { setSession(sess); setView(sess.role); };
-  const logout = ()   => { setSession(null);  setView("login"); };
+  const login  = sess => { localStorage.setItem("gdpl_portal_session", JSON.stringify(sess)); setSession(sess); setView(sess.role); window.location.hash=""; };
+  const logout = ()   => { localStorage.removeItem("gdpl_portal_session"); setSession(null); setView("login"); window.location.hash=""; };
+  const showInquiry = () => { window.location.hash="inquiry"; setView("inquiry"); };
+  const showLogin = () => { window.location.hash=""; setView(session?.role || "login"); };
+
+  useEffect(() => {
+    const onHashChange = () => setView(window.location.hash === "#inquiry" ? "inquiry" : (session?.role || "login"));
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [session]);
 
   return (
     <>
       <style>{GLOBAL_CSS}</style>
       {view==="register" && <RegistrationPage onSuccess={()=>setView("login")} onLoginClick={()=>setView("login")} />}
-      {view==="login"    && <LoginPage onLogin={login} onRegisterClick={()=>setView("register")} />}
+      {view==="login"    && <LoginPage onLogin={login} onRegisterClick={()=>setView("register")} onInquiryClick={showInquiry} />}
+      {view==="inquiry"  && <PublicInquiryPage supabase={sb} onBackToLogin={showLogin} />}
       {view==="vendor"   && session?.vendor && <VendorPortal vendor={session.vendor} onLogout={logout} />}
       {view==="admin"    && <AdminPanel onLogout={logout} />}
     </>

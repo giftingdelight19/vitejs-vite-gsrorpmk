@@ -1,34 +1,34 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
-const inquirySchema = {
-  type: "object",
+const schema = {
+  type: Type.OBJECT,
   properties: {
     customer_name: {
-      type: ["string", "null"],
-      description: "Company or customer name"
+      type: Type.STRING,
+      nullable: true
     },
     contact_name: {
-      type: ["string", "null"],
-      description: "Individual contact person's name"
+      type: Type.STRING,
+      nullable: true
     },
     contact_phone: {
-      type: ["string", "null"],
-      description: "Phone or mobile number"
+      type: Type.STRING,
+      nullable: true
     },
     contact_email: {
-      type: ["string", "null"],
-      description: "Email address"
+      type: Type.STRING,
+      nullable: true
     },
     requirement: {
-      type: ["string", "null"],
-      description: "Short overall requirement summary"
+      type: Type.STRING,
+      nullable: true
     },
     expected_delivery_date: {
-      type: ["string", "null"],
-      description: "Expected delivery date in YYYY-MM-DD format"
+      type: Type.STRING,
+      nullable: true
     },
     source: {
-      type: "string",
+      type: Type.STRING,
       enum: [
         "WhatsApp",
         "Email",
@@ -40,7 +40,7 @@ const inquirySchema = {
       ]
     },
     status: {
-      type: "string",
+      type: Type.STRING,
       enum: [
         "New",
         "Contacted",
@@ -52,30 +52,36 @@ const inquirySchema = {
       ]
     },
     notes: {
-      type: ["string", "null"]
+      type: Type.STRING,
+      nullable: true
     },
     products: {
-      type: "array",
+      type: Type.ARRAY,
       items: {
-        type: "object",
+        type: Type.OBJECT,
         properties: {
           product_name: {
-            type: ["string", "null"]
+            type: Type.STRING
           },
           description: {
-            type: ["string", "null"]
+            type: Type.STRING,
+            nullable: true
           },
           quantity: {
-            type: ["number", "null"]
+            type: Type.NUMBER,
+            nullable: true
           },
           unit: {
-            type: "string"
+            type: Type.STRING,
+            nullable: true
           },
           budget_per_unit: {
-            type: ["number", "null"]
+            type: Type.NUMBER,
+            nullable: true
           },
           total_budget: {
-            type: ["number", "null"]
+            type: Type.NUMBER,
+            nullable: true
           }
         },
         required: [
@@ -85,8 +91,7 @@ const inquirySchema = {
           "unit",
           "budget_per_unit",
           "total_budget"
-        ],
-        additionalProperties: false
+        ]
       }
     }
   },
@@ -101,49 +106,40 @@ const inquirySchema = {
     "status",
     "notes",
     "products"
-  ],
-  additionalProperties: false
+  ]
 };
 
-const extractionPrompt = `
-You are an expert sales inquiry extraction assistant for
-Gifting Delight Private Limited.
-
-Extract structured information from the customer's inquiry.
-
-IMPORTANT RULES:
-
-1. Do NOT invent information.
-2. If information is not present, return null.
-3. Clearly distinguish the company/customer name from the contact person's name.
-4. Extract phone and email exactly when present.
-5. Extract EVERY distinct product requested.
-6. One inquiry may contain multiple products.
-7. NEVER combine different products into one product.
-8. Quantity must be extracted separately for each product.
-9. Budget must be extracted separately for each product.
-10. If the inquiry says:
-   "Shivam from Wipro Industries has given an order of
-   500 T-shirts of Arrow for budget of Rs 900"
-   then:
-   customer_name = Wipro Industries
-   contact_name = Shivam
-   product_name should identify the requested product/brand,
-   quantity = 500,
-   and budget_per_unit = 900 only if the wording indicates
-   Rs 900 is the per-unit budget.
-11. Do not assume that a number is a budget unless the text indicates it.
-12. Preserve brand names and product specifications.
-13. If several products are requested, create separate product objects.
-14. Understand Hindi, Hinglish, Marathi and mixed-language inquiries.
-15. requirement should be a SHORT overall summary.
-16. Do not put the entire original message into requirement.
-17. Convert an explicitly stated delivery date to YYYY-MM-DD.
-18. Do not create inquiry_date. The application will set it automatically.
-19. Do not guess a missing customer name, contact name, quantity,
-    product or budget.
-20. Return only the requested structured JSON.
-`;
+const instructions = [
+  "You are an expert sales inquiry data extraction assistant for Gifting Delight Private Limited.",
+  "Extract information from the customer's inquiry accurately.",
+  "",
+  "IMPORTANT RULES:",
+  "1. Do NOT invent information.",
+  "2. If a field is not present, return null.",
+  "3. Clearly distinguish the company/customer name from the contact person's name.",
+  "4. Extract phone and email exactly when present.",
+  "5. Extract every distinct product requested.",
+  "6. One inquiry can contain multiple products.",
+  "7. Never combine different products into one product.",
+  "8. Extract quantity separately for each product.",
+  "9. Extract budget separately for each product.",
+  "10. Preserve important product specifications such as brand, colour, size, material, printing, logo and packaging.",
+  "11. If several products have different quantities or budgets, keep them as separate product objects.",
+  "12. Convert an explicitly stated delivery date to YYYY-MM-DD.",
+  "13. Do not create an inquiry date. The application will set inquiry_date separately.",
+  "14. If the inquiry is in Hindi, Hinglish, Marathi or mixed language, understand it and extract the information into the English field structure.",
+  "15. The requirement field should be a concise overall summary, not the entire original message.",
+  "16. The products array may contain any number of products.",
+  "17. If the source is not explicitly stated, use Other.",
+  "18. For a newly extracted inquiry, use status New.",
+  "19. Never guess customer names, contact names, phone numbers, email addresses, quantities, prices or dates.",
+  "20. If quantity is not stated, return null.",
+  "21. If unit is not stated, return null.",
+  "22. If budget is not stated, return null.",
+  "23. If a number is given, do not assume it is a budget unless the inquiry clearly indicates that it is.",
+  "24. If the customer says 500 T-shirts of Arrow for Rs 900 and Rs 900 clearly means per piece, use budget_per_unit 900.",
+  "25. If the wording clearly gives a total budget rather than a per-unit budget, use total_budget."
+].join("\n");
 
 export default async function handler(request) {
   try {
@@ -161,16 +157,43 @@ export default async function handler(request) {
       );
     }
 
-    const body = await request.json();
+    let body;
 
-    const text = body?.text || "";
-    const imageBase64 = body?.imageBase64 || "";
-    const imageMimeType = body?.imageMimeType || "";
+    try {
+      body = await request.json();
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid JSON request body."
+        }),
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+    }
+
+    const text =
+      typeof body?.text === "string"
+        ? body.text
+        : "";
+
+    const imageBase64 =
+      typeof body?.imageBase64 === "string"
+        ? body.imageBase64
+        : null;
+
+    const imageMimeType =
+      typeof body?.imageMimeType === "string"
+        ? body.imageMimeType
+        : null;
 
     if (!text.trim() && !imageBase64) {
       return new Response(
         JSON.stringify({
-          error: "Please provide inquiry text or an image."
+          error: "No inquiry text or image supplied."
         }),
         {
           status: 400,
@@ -186,7 +209,7 @@ export default async function handler(request) {
     if (!apiKey) {
       return new Response(
         JSON.stringify({
-          error: "GEMINI_API_KEY is not configured in Netlify."
+          error: "GEMINI_API_KEY is not configured on the server."
         }),
         {
           status: 500,
@@ -198,20 +221,37 @@ export default async function handler(request) {
     }
 
     const ai = new GoogleGenAI({
-      apiKey
+      apiKey: apiKey
     });
 
-    const contents = [];
+    const parts = [];
 
-    contents.push({
+    parts.push({
       text:
-        extractionPrompt +
-        "\n\nCUSTOMER INQUIRY:\n" +
-        (text.trim() || "(The inquiry is contained in the attached image.)")
+        instructions +
+        "\n\nCustomer inquiry:\n" +
+        (
+          text.trim() ||
+          "(The inquiry was supplied as an image.)"
+        )
     });
 
-    if (imageBase64 && imageMimeType) {
-      contents.push({
+    if (imageBase64) {
+      if (!imageMimeType) {
+        return new Response(
+          JSON.stringify({
+            error: "imageMimeType is required when imageBase64 is supplied."
+          }),
+          {
+            status: 400,
+            headers: {
+              "Content-Type": "application/json"
+            }
+          }
+        );
+      }
+
+      parts.push({
         inlineData: {
           mimeType: imageMimeType,
           data: imageBase64
@@ -221,36 +261,54 @@ export default async function handler(request) {
 
     const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
-      contents,
-      config: {
-        responseFormat: {
-          text: {
-            mimeType: "application/json",
-            schema: inquirySchema
-          }
+      contents: [
+        {
+          role: "user",
+          parts: parts
         }
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+        temperature: 0
       }
     });
 
-    const responseText = response.text;
+    const outputText = response.text;
 
-    if (!responseText) {
+    if (!outputText) {
       throw new Error("Gemini returned an empty response.");
     }
 
-    let extractedData;
+    let extracted;
 
     try {
-      extractedData = JSON.parse(responseText);
+      extracted = JSON.parse(outputText);
     } catch (error) {
-      console.error("Gemini JSON parse error:", responseText);
+      console.error(
+        "Gemini returned invalid JSON:",
+        outputText
+      );
+
       throw new Error("Gemini returned invalid JSON.");
+    }
+
+    if (!extracted.source) {
+      extracted.source = "Other";
+    }
+
+    if (!extracted.status) {
+      extracted.status = "New";
+    }
+
+    if (!Array.isArray(extracted.products)) {
+      extracted.products = [];
     }
 
     return new Response(
       JSON.stringify({
         success: true,
-        data: extractedData
+        data: extracted
       }),
       {
         status: 200,
@@ -260,12 +318,16 @@ export default async function handler(request) {
       }
     );
   } catch (error) {
-    console.error("Inquiry extraction error:", error);
+    console.error(
+      "Gemini inquiry extraction error:",
+      error
+    );
 
     return new Response(
       JSON.stringify({
-        success: false,
-        error: error?.message || "Unable to extract inquiry."
+        error:
+          error?.message ||
+          "Unable to extract inquiry."
       }),
       {
         status: 500,
