@@ -4,7 +4,7 @@ import POManagement from "./POManagement";
 import PODTracker from "./PODTracker";
 
 import { createClient } from "@supabase/supabase-js";
-import InquiryManagement, { PublicInquiryPage } from "./InquiryManagement";
+import InquiryManagement from "./InquiryManagement";
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 const SUPA_URL = "https://xzcvevmjmymsdjbvtzbs.supabase.co";
@@ -1035,7 +1035,7 @@ function RegistrationPage({ onSuccess, onLoginClick }) {
 }
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-function LoginPage({ onLogin, onRegisterClick, onInquiryClick }) {
+function LoginPage({ onLogin, onRegisterClick }) {
   const [email, setEmail]     = useState("");
   const [password, setPass]   = useState("");
   const [mode, setMode]       = useState("vendor");
@@ -1047,19 +1047,9 @@ function LoginPage({ onLogin, onRegisterClick, onInquiryClick }) {
     setError(""); setLoading(true);
     try {
       if (mode==="admin") {
-        const { data:authData, error:authError } = await sb.auth.signInWithPassword({
-          email: email.trim().toLowerCase(),
-          password,
-        });
-        if (authError || !authData?.user) {
-          setError("Invalid admin credentials."); setLoading(false); return;
-        }
-        const { data:isAdmin, error:roleError } = await sb.rpc("is_portal_admin");
-        if (roleError || !isAdmin) {
-          await sb.auth.signOut();
-          setError("This account does not have administrator access."); setLoading(false); return;
-        }
-        onLogin({ role:"admin", name:authData.user.email, user_id:authData.user.id });
+        const { data, error:err } = await sb.from("admin_users").select("*").eq("email",email).eq("password",password).single();
+        if (err||!data) { setError("Invalid admin credentials."); setLoading(false); return; }
+        onLogin({ role:"admin", name:data.name });
       } else {
         const { data, error:err } = await sb.from("vendors").select("*").eq("email",email).eq("password",password).single();
         if (err||!data) { setError("Email or password is incorrect."); setLoading(false); return; }
@@ -1120,11 +1110,6 @@ function LoginPage({ onLogin, onRegisterClick, onInquiryClick }) {
               <Btn variant="secondary" onClick={onRegisterClick} style={{ width:"100%", justifyContent:"center" }}>Register as a vendor →</Btn>
             </div>
           )}
-          <div style={{ marginTop:12 }}>
-            <Btn variant="primary" onClick={onInquiryClick} style={{ width:"100%", justifyContent:"center", background:T.green, borderColor:T.green }}>
-              Submit a product inquiry — no login required
-            </Btn>
-          </div>
          <div style={{ marginTop:24, padding:14, background:T.blueLight, borderRadius:10, fontSize:12 }}>
             <div style={{ fontWeight:600, color:"#1e40af", marginBottom:4 }}>Need help?</div>
             <div style={{ color:"#1e40af" }}>Contact: support@giftingdelight.co.in</div>
@@ -2016,37 +2001,17 @@ function AdminPanel({ onLogout }) {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const savedSession = (() => {
-    try { return JSON.parse(localStorage.getItem("gdpl_portal_session") || "null"); }
-    catch { return null; }
-  })();
-  const initialPublicView = window.location.hash === "#inquiry";
-  const [view, setView]       = useState(initialPublicView ? "inquiry" : (savedSession?.role || "login"));
-  const [session, setSession] = useState(savedSession);
+  const [view, setView]       = useState("login");
+  const [session, setSession] = useState(null);
 
-  const login  = sess => { localStorage.setItem("gdpl_portal_session", JSON.stringify(sess)); setSession(sess); setView(sess.role); window.location.hash=""; };
-  const logout = async () => {
-    if (session?.role === "admin") await sb.auth.signOut();
-    localStorage.removeItem("gdpl_portal_session");
-    setSession(null);
-    setView("login");
-    window.location.hash="";
-  };
-  const showInquiry = () => { window.location.hash="inquiry"; setView("inquiry"); };
-  const showLogin = () => { window.location.hash=""; setView(session?.role || "login"); };
-
-  useEffect(() => {
-    const onHashChange = () => setView(window.location.hash === "#inquiry" ? "inquiry" : (session?.role || "login"));
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, [session]);
+  const login  = sess => { setSession(sess); setView(sess.role); };
+  const logout = ()   => { setSession(null);  setView("login"); };
 
   return (
     <>
       <style>{GLOBAL_CSS}</style>
       {view==="register" && <RegistrationPage onSuccess={()=>setView("login")} onLoginClick={()=>setView("login")} />}
-      {view==="login"    && <LoginPage onLogin={login} onRegisterClick={()=>setView("register")} onInquiryClick={showInquiry} />}
-      {view==="inquiry"  && <PublicInquiryPage supabase={sb} onBackToLogin={showLogin} />}
+      {view==="login"    && <LoginPage onLogin={login} onRegisterClick={()=>setView("register")} />}
       {view==="vendor"   && session?.vendor && <VendorPortal vendor={session.vendor} onLogout={logout} />}
       {view==="admin"    && <AdminPanel onLogout={logout} />}
     </>
