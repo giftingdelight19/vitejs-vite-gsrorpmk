@@ -36,3 +36,5 @@ export async function onRequest(context) {
     );
   }
 }
+
+// corrected proxy version
